@@ -1,0 +1,30 @@
+{
+  "name": "rejuvenators-platform",
+  "version": "1.0.0",
+  "description": "Complete massage booking and admin platform",
+  "type": "module",
+  "scripts": {
+    "install:all": "npm install && cd admin && npm install && cd ../booking && npm install",
+    "dev:admin": "cd admin && npm run dev",
+    "dev:booking": "cd booking && npm run dev",
+    "build:admin": "cd admin && npm run build",
+    "build:booking": "cd booking && npm run build",
+    "build": "npm run build:admin && npm run build:booking && npm run merge:builds",
+    "merge:builds": "node merge-builds.js",
+    "start": "npm run build && netlify dev",
+    "deploy": "npm run build && netlify deploy --prod"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.39.0"
+  },
+  "devDependencies": {
+    "netlify-cli": "^17.0.0"
+  },
+  "engines": {
+    "node": "18.x"
+  },
+  "workspaces": [
+    "admin",
+    "booking"
+  ]
+}
