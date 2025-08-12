@@ -47,10 +47,6 @@
 # Ensure root serves booking platform (index.html should be at root)
 # No redirect needed - Netlify serves index.html by default at root
 
-# Plugin configuration
-[[plugins]]
-  package = "@netlify/plugin-functions"
-
 # Form handling (if needed for contact forms)
 [build.processing]
   skip_processing = false
