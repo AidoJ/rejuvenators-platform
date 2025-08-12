@@ -3,5 +3,9 @@ import { defineConfig } from "vite";
 
 export default defineConfig({
   plugins: [react()],
-  base: '/admin/', // 👈 This fixes the asset path issue
+  base: '/admin/',
+  build: {
+    outDir: 'dist',
+    assetsDir: 'assets',
+  },
 });
