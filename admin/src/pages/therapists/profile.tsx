@@ -14,8 +14,12 @@ import {
   Typography,
   Space,
   Upload,
-  Avatar,
-  Tabs
+  Tabs,
+  TimePicker,
+  DatePicker,
+  Table,
+  Modal,
+  Checkbox
 } from 'antd';
 import {
   UserOutlined,
@@ -24,16 +28,22 @@ import {
   CameraOutlined,
   EnvironmentOutlined,
   PhoneOutlined,
-  MailOutlined
+  MailOutlined,
+  ClockCircleOutlined,
+  CalendarOutlined,
+  PlusOutlined,
+  DeleteOutlined
 } from '@ant-design/icons';
 import { useGetIdentity } from '@refinedev/core';
 import { useParams, useNavigate } from 'react-router';
 import { supabaseClient } from '../../utility';
+import dayjs from 'dayjs';
 
 const { Title } = Typography;
 const { TextArea } = Input;
 const { Option } = Select;
 const { TabPane } = Tabs;
+const { RangePicker } = DatePicker;
 
 interface TherapistProfile {
   id?: string;
@@ -57,8 +67,27 @@ interface TherapistProfile {
   address_verified?: boolean;
 }
 
+interface AvailabilitySlot {
+  id?: string;
+  day_of_week: number;
+  start_time: string;
+  end_time: string;
+}
+
+interface TimeOff {
+  id?: string;
+  start_date: string;
+  end_date: string;
+  start_time?: string;
+  end_time?: string;
+  reason?: string;
+  is_active: boolean;
+}
+
 const TherapistProfileManagement: React.FC = () => {
   const [form] = Form.useForm();
+  const [availabilityForm] = Form.useForm();
+  const [timeOffForm] = Form.useForm();
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { data: identity } = useGetIdentity<any>();
@@ -67,14 +96,22 @@ const TherapistProfileManagement: React.FC = () => {
   const [initialLoading, setInitialLoading] = useState(!!id);
   const [profile, setProfile] = useState<TherapistProfile | null>(null);
   const [fileList, setFileList] = useState<any[]>([]);
+  const [availability, setAvailability] = useState<AvailabilitySlot[]>([]);
+  const [timeOff, setTimeOff] = useState<TimeOff[]>([]);
+  const [availabilityModalVisible, setAvailabilityModalVisible] = useState(false);
+  const [timeOffModalVisible, setTimeOffModalVisible] = useState(false);
 
   const profileId = id || identity?.therapist_profile_id;
   const isOwnProfile = !id || (identity?.therapist_profile_id && id === identity.therapist_profile_id);
   const isAdmin = identity?.role === 'admin' || identity?.role === 'super_admin';
 
+  const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
   useEffect(() => {
     if (profileId) {
       loadProfile();
+      loadAvailability();
+      loadTimeOff();
     } else {
       setInitialLoading(false);
     }
@@ -84,7 +121,8 @@ const TherapistProfileManagement: React.FC = () => {
   const loadGoogleMaps = () => {
     if (!(window as any).google) {
       const script = document.createElement('script');
-      script.src = `https://maps.googleapis.com/maps/api/js?key=${process.env.REACT_APP_GOOGLE_MAPS_API_KEY}&libraries=places`;
+      // Use VITE_GOOGLE_MAPS_API_KEY instead of REACT_APP_GOOGLE_MAPS_API_KEY
+      script.src = `https://maps.googleapis.com/maps/api/js?key=${import.meta.env.VITE_GOOGLE_MAPS_API_KEY}&libraries=places`;
       script.onload = () => {
         setupAddressAutocomplete();
       };
@@ -155,25 +193,52 @@ const TherapistProfileManagement: React.FC = () => {
     }
   };
 
+  const loadAvailability = async () => {
+    if (!profileId) return;
+
+    try {
+      const { data, error } = await supabaseClient
+        .from('therapist_availability')
+        .select('*')
+        .eq('therapist_id', profileId)
+        .order('day_of_week');
+
+      if (error) throw error;
+      setAvailability(data || []);
+    } catch (error) {
+      console.error('Error loading availability:', error);
+    }
+  };
+
+  const loadTimeOff = async () => {
+    if (!profileId) return;
+
+    try {
+      const { data, error } = await supabaseClient
+        .from('therapist_time_off')
+        .select('*')
+        .eq('therapist_id', profileId)
+        .eq('is_active', true)
+        .order('start_date');
+
+      if (error) throw error;
+      setTimeOff(data || []);
+    } catch (error) {
+      console.error('Error loading time off:', error);
+    }
+  };
+
   const handleImageUpload = async (file: any) => {
     try {
-      const fileExt = file.name.split('.').pop();
-      const fileName = `${profileId || 'new'}_${Date.now()}.${fileExt}`;
-      const filePath = `therapist-photos/${fileName}`;
-
-      const { error: uploadError } = await supabaseClient.storage
-        .from('therapist-photos')
-        .upload(filePath, file);
-
-      if (uploadError) throw uploadError;
-
-      const { data } = supabaseClient.storage
-        .from('therapist-photos')
-        .getPublicUrl(filePath);
-
-      return data.publicUrl;
+      // Convert image to base64 to avoid storage issues
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
     } catch (error) {
-      console.error('Error uploading image:', error);
+      console.error('Error processing image:', error);
       throw error;
     }
   };
@@ -235,6 +300,97 @@ const TherapistProfileManagement: React.FC = () => {
     }
   };
 
+  const handleAddAvailability = async (values: any) => {
+    try {
+      const availabilityData = {
+        therapist_id: profileId,
+        day_of_week: values.day_of_week,
+        start_time: values.start_time.format('HH:mm:ss'),
+        end_time: values.end_time.format('HH:mm:ss')
+      };
+
+      const { data, error } = await supabaseClient
+        .from('therapist_availability')
+        .insert([availabilityData])
+        .select()
+        .single();
+
+      if (error) throw error;
+
+      setAvailability([...availability, data]);
+      setAvailabilityModalVisible(false);
+      availabilityForm.resetFields();
+      message.success('Availability added successfully!');
+    } catch (error) {
+      console.error('Error adding availability:', error);
+      message.error('Failed to add availability');
+    }
+  };
+
+  const handleDeleteAvailability = async (id: string) => {
+    try {
+      const { error } = await supabaseClient
+        .from('therapist_availability')
+        .delete()
+        .eq('id', id);
+
+      if (error) throw error;
+
+      setAvailability(availability.filter(slot => slot.id !== id));
+      message.success('Availability removed successfully!');
+    } catch (error) {
+      console.error('Error deleting availability:', error);
+      message.error('Failed to remove availability');
+    }
+  };
+
+  const handleAddTimeOff = async (values: any) => {
+    try {
+      const timeOffData = {
+        therapist_id: profileId,
+        start_date: values.dates[0].format('YYYY-MM-DD'),
+        end_date: values.dates[1].format('YYYY-MM-DD'),
+        start_time: values.start_time?.format('HH:mm:ss'),
+        end_time: values.end_time?.format('HH:mm:ss'),
+        reason: values.reason,
+        is_active: true
+      };
+
+      const { data, error } = await supabaseClient
+        .from('therapist_time_off')
+        .insert([timeOffData])
+        .select()
+        .single();
+
+      if (error) throw error;
+
+      setTimeOff([...timeOff, data]);
+      setTimeOffModalVisible(false);
+      timeOffForm.resetFields();
+      message.success('Time off added successfully!');
+    } catch (error) {
+      console.error('Error adding time off:', error);
+      message.error('Failed to add time off');
+    }
+  };
+
+  const handleDeleteTimeOff = async (id: string) => {
+    try {
+      const { error } = await supabaseClient
+        .from('therapist_time_off')
+        .update({ is_active: false })
+        .eq('id', id);
+
+      if (error) throw error;
+
+      setTimeOff(timeOff.filter(item => item.id !== id));
+      message.success('Time off removed successfully!');
+    } catch (error) {
+      console.error('Error deleting time off:', error);
+      message.error('Failed to remove time off');
+    }
+  };
+
   const handleBack = () => {
     if (isAdmin && !isOwnProfile) {
       navigate('/therapists');
@@ -259,6 +415,85 @@ const TherapistProfileManagement: React.FC = () => {
       }
     }
   };
+
+  const availabilityColumns = [
+    {
+      title: 'Day',
+      dataIndex: 'day_of_week',
+      key: 'day_of_week',
+      render: (day: number) => dayNames[day]
+    },
+    {
+      title: 'Start Time',
+      dataIndex: 'start_time',
+      key: 'start_time',
+      render: (time: string) => dayjs(time, 'HH:mm:ss').format('h:mm A')
+    },
+    {
+      title: 'End Time',
+      dataIndex: 'end_time',
+      key: 'end_time',
+      render: (time: string) => dayjs(time, 'HH:mm:ss').format('h:mm A')
+    },
+    {
+      title: 'Actions',
+      key: 'actions',
+      render: (_: any, record: AvailabilitySlot) => (
+        <Button 
+          danger 
+          size="small" 
+          icon={<DeleteOutlined />}
+          onClick={() => handleDeleteAvailability(record.id!)}
+        >
+          Remove
+        </Button>
+      )
+    }
+  ];
+
+  const timeOffColumns = [
+    {
+      title: 'Start Date',
+      dataIndex: 'start_date',
+      key: 'start_date',
+      render: (date: string) => dayjs(date).format('MMM DD, YYYY')
+    },
+    {
+      title: 'End Date',
+      dataIndex: 'end_date',
+      key: 'end_date',
+      render: (date: string) => dayjs(date).format('MMM DD, YYYY')
+    },
+    {
+      title: 'Time',
+      key: 'time',
+      render: (_: any, record: TimeOff) => {
+        if (record.start_time && record.end_time) {
+          return `${dayjs(record.start_time, 'HH:mm:ss').format('h:mm A')} - ${dayjs(record.end_time, 'HH:mm:ss').format('h:mm A')}`;
+        }
+        return 'All Day';
+      }
+    },
+    {
+      title: 'Reason',
+      dataIndex: 'reason',
+      key: 'reason'
+    },
+    {
+      title: 'Actions',
+      key: 'actions',
+      render: (_: any, record: TimeOff) => (
+        <Button 
+          danger 
+          size="small" 
+          icon={<DeleteOutlined />}
+          onClick={() => handleDeleteTimeOff(record.id!)}
+        >
+          Remove
+        </Button>
+      )
+    }
+  ];
 
   if (initialLoading) {
     return (
@@ -450,6 +685,44 @@ const TherapistProfileManagement: React.FC = () => {
                 </Form.Item>
               </TabPane>
 
+              <TabPane tab="Availability" key="availability">
+                <div style={{ marginBottom: 16 }}>
+                  <Button 
+                    type="primary" 
+                    icon={<PlusOutlined />}
+                    onClick={() => setAvailabilityModalVisible(true)}
+                  >
+                    Add Availability
+                  </Button>
+                </div>
+                
+                <Table 
+                  dataSource={availability} 
+                  columns={availabilityColumns}
+                  rowKey="id"
+                  pagination={false}
+                />
+              </TabPane>
+
+              <TabPane tab="Time Off" key="timeoff">
+                <div style={{ marginBottom: 16 }}>
+                  <Button 
+                    type="primary" 
+                    icon={<PlusOutlined />}
+                    onClick={() => setTimeOffModalVisible(true)}
+                  >
+                    Add Time Off
+                  </Button>
+                </div>
+                
+                <Table 
+                  dataSource={timeOff} 
+                  columns={timeOffColumns}
+                  rowKey="id"
+                  pagination={false}
+                />
+              </TabPane>
+
               <TabPane tab="Performance" key="performance">
                 <Row gutter={24}>
                   <Col span={12}>
@@ -493,6 +766,96 @@ const TherapistProfileManagement: React.FC = () => {
           </Form>
         </Space>
       </Card>
+
+      {/* Availability Modal */}
+      <Modal
+        title="Add Availability"
+        open={availabilityModalVisible}
+        onCancel={() => setAvailabilityModalVisible(false)}
+        footer={null}
+      >
+        <Form form={availabilityForm} onFinish={handleAddAvailability} layout="vertical">
+          <Form.Item
+            label="Day of Week"
+            name="day_of_week"
+            rules={[{ required: true, message: 'Please select a day' }]}
+          >
+            <Select>
+              {dayNames.map((day, index) => (
+                <Option key={index} value={index}>{day}</Option>
+              ))}
+            </Select>
+          </Form.Item>
+          
+          <Row gutter={16}>
+            <Col span={12}>
+              <Form.Item
+                label="Start Time"
+                name="start_time"
+                rules={[{ required: true, message: 'Please select start time' }]}
+              >
+                <TimePicker format="HH:mm" />
+              </Form.Item>
+            </Col>
+            <Col span={12}>
+              <Form.Item
+                label="End Time"
+                name="end_time"
+                rules={[{ required: true, message: 'Please select end time' }]}
+              >
+                <TimePicker format="HH:mm" />
+              </Form.Item>
+            </Col>
+          </Row>
+          
+          <Form.Item>
+            <Button type="primary" htmlType="submit">
+              Add Availability
+            </Button>
+          </Form.Item>
+        </Form>
+      </Modal>
+
+      {/* Time Off Modal */}
+      <Modal
+        title="Add Time Off"
+        open={timeOffModalVisible}
+        onCancel={() => setTimeOffModalVisible(false)}
+        footer={null}
+      >
+        <Form form={timeOffForm} onFinish={handleAddTimeOff} layout="vertical">
+          <Form.Item
+            label="Date Range"
+            name="dates"
+            rules={[{ required: true, message: 'Please select date range' }]}
+          >
+            <RangePicker />
+          </Form.Item>
+          
+          <Row gutter={16}>
+            <Col span={12}>
+              <Form.Item label="Start Time (Optional)" name="start_time">
+                <TimePicker format="HH:mm" placeholder="All day if empty" />
+              </Form.Item>
+            </Col>
+            <Col span={12}>
+              <Form.Item label="End Time (Optional)" name="end_time">
+                <TimePicker format="HH:mm" placeholder="All day if empty" />
+              </Form.Item>
+            </Col>
+          </Row>
+          
+          <Form.Item label="Reason" name="reason">
+            <TextArea rows={3} placeholder="Reason for time off (optional)" />
+          </Form.Item>
+          
+          <Form.Item>
+            <Button type="primary" htmlType="submit">
+              Add Time Off
+            </Button>
+          </Form.Item>
+        </Form>
+      </Modal>
     </div>
   );
 };
