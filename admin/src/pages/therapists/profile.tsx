@@ -51,17 +51,16 @@ const TherapistProfileManagement: React.FC = () => {
   const [form] = Form.useForm();
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const { data: identity } = useGetIdentity();
+  const { data: identity } = useGetIdentity<any>();
   
   const [loading, setLoading] = useState(false);
   const [initialLoading, setInitialLoading] = useState(!!id);
   const [profile, setProfile] = useState<TherapistProfile | null>(null);
 
-  const { data: identity } = useGetIdentity<any>();
+  const profileId = id || identity?.therapist_profile_id;
+  const isOwnProfile = !id || (identity?.therapist_profile_id && id === identity.therapist_profile_id);
+  const isAdmin = identity?.role === 'admin' || identity?.role === 'super_admin';
 
-const profileId = id || identity?.therapist_profile_id;
-const isOwnProfile = !id || (identity?.therapist_profile_id && id === identity.therapist_profile_id);
-const isAdmin = identity?.role === 'admin' || identity?.role === 'super_admin';
   useEffect(() => {
     if (profileId) {
       loadProfile();
@@ -70,7 +69,6 @@ const isAdmin = identity?.role === 'admin' || identity?.role === 'super_admin';
     }
   }, [profileId]);
 
-  // Load Google Maps API for address autocomplete
   useEffect(() => {
     if (!(window as any).google) {
       const script = document.createElement('script');
@@ -146,7 +144,6 @@ const isAdmin = identity?.role === 'admin' || identity?.role === 'super_admin';
       let savedProfile;
 
       if (profileId) {
-        // Update existing profile
         const { data, error } = await supabaseClient
           .from('therapist_profiles')
           .update(profileData)
@@ -157,7 +154,6 @@ const isAdmin = identity?.role === 'admin' || identity?.role === 'super_admin';
         if (error) throw error;
         savedProfile = data;
       } else {
-        // Create new profile
         const { data, error } = await supabaseClient
           .from('therapist_profiles')
           .insert([profileData])
@@ -333,14 +329,6 @@ const isAdmin = identity?.role === 'admin' || identity?.role === 'super_admin';
 
             <Form.Item label="Active Status" name="is_active" valuePropName="checked">
               <Switch checkedChildren="Active" unCheckedChildren="Inactive" />
-            </Form.Item>
-
-            {/* Hidden fields for lat/lng */}
-            <Form.Item name="latitude" hidden>
-              <Input />
-            </Form.Item>
-            <Form.Item name="longitude" hidden>
-              <Input />
             </Form.Item>
 
             <div style={{ marginTop: '32px', textAlign: 'right' }}>
