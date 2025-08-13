@@ -1,10 +1,9 @@
 export { Header } from "./header";
 export { TherapistPhoto } from "./TherapistPhoto";
-// Add these exports to your existing index.ts file
-export { default as GooglePlacesAddressInput } from './GooglePlacesAddressInput';
-export { default as TherapistLocationMap } from './TherapistLocationMap';
-export { default as EnhancedTherapistProfileForm } from './EnhancedTherapistProfileForm';
 
-// Keep your existing exports too
-export { default as RoleGuard } from './RoleGuard';
-// etc.
+export { default as GooglePlacesAddressInput } from './googleplacesaddressinput';
+export { default as TherapistLocationMap } from './therapistlocationmap'; 
+export { default as EnhancedTherapistProfileForm } from './enhancedtherapistprofileform';
+
+// Fix RoleGuard export - check if it's a named export or default export
+export { RoleGuard } from './RoleGuard';
