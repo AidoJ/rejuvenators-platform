@@ -1,44 +1,64 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
+  Card,
+  Tabs,
   Form,
   Input,
-  InputNumber,
   Select,
   Button,
-  Card,
   Row,
   Col,
-  Space,
-  Divider,
+  InputNumber,
+  Switch,
   message,
-  Tag,
-  Checkbox,
-  Upload,
-  Avatar,
-  Tabs,
+  Spin,
   TimePicker,
-  Table,
-  Popconfirm,
-  Alert
+  Checkbox,
+  Typography,
+  Space,
+  Tag,
+  Divider,
+  Alert,
+  Upload,
+  Avatar
 } from 'antd';
 import {
   UserOutlined,
   EnvironmentOutlined,
+  ToolOutlined,
+  ClockCircleOutlined,
   SaveOutlined,
-  CheckCircleOutlined,
-  WarningOutlined,
-  PlusOutlined,
-  DeleteOutlined,
-  UploadOutlined
+  HomeOutlined,
+  RadiusSettingOutlined,
+  CameraOutlined
 } from '@ant-design/icons';
-import { supabaseClient } from '../../utility';
-import GooglePlacesAddressInput, { GooglePlacesAddressInputRef } from './GooglePlacesAddressInput';
-import TherapistLocationMap from './TherapistLocationMap';
 import dayjs from 'dayjs';
+import { supabaseClient } from '../utility';
+import GooglePlacesAddressInput from './GooglePlacesAddressInput';
+import TherapistLocationMap from './TherapistLocationMap';
 
+const { Title, Text } = Typography;
 const { TextArea } = Input;
 const { Option } = Select;
 const { TabPane } = Tabs;
+
+interface AddressData {
+  formatted_address: string;
+  components: {
+    streetNumber?: string;
+    streetName?: string;
+    city?: string;
+    state?: string;
+    postcode?: string;
+    country?: string;
+    countryCode?: string;
+  };
+  geometry: {
+    lat: number;
+    lng: number;
+  };
+  place_id: string;
+}
 
 interface TherapistProfile {
   id?: string;
@@ -52,11 +72,12 @@ interface TherapistProfile {
   home_address?: string;
   latitude?: number;
   longitude?: number;
-  address_verified?: boolean;
   service_radius_km?: number;
-  gender?: 'male' | 'female' | 'other' | 'prefer_not_to_say';
+  is_active: boolean;
+  gender?: string;
   years_experience?: number;
-  is_active?: boolean;
+  rating?: number;
+  total_reviews?: number;
 }
 
 interface Service {
@@ -66,176 +87,163 @@ interface Service {
   service_base_price: number;
 }
 
-interface Availability {
+interface AvailabilitySlot {
   id?: string;
   day_of_week: number;
   start_time: string;
   end_time: string;
+  is_available: boolean;
 }
 
 interface EnhancedTherapistProfileFormProps {
   profileId?: string;
-  onSave?: (profile: TherapistProfile) => void;
-  mode?: 'create' | 'edit';
+  mode: 'create' | 'edit';
+  onSave: (profile: TherapistProfile) => void;
 }
 
 const EnhancedTherapistProfileForm: React.FC<EnhancedTherapistProfileFormProps> = ({
   profileId,
-  onSave,
-  mode = 'edit'
+  mode,
+  onSave
 }) => {
   const [form] = Form.useForm();
   const [loading, setLoading] = useState(false);
-  const [saving, setSaving] = useState(false);
+  const [initialLoading, setInitialLoading] = useState(mode === 'edit');
   const [profile, setProfile] = useState<TherapistProfile | null>(null);
   const [services, setServices] = useState<Service[]>([]);
   const [selectedServices, setSelectedServices] = useState<string[]>([]);
-  const [availability, setAvailability] = useState<Availability[]>([]);
-  const [addressVerified, setAddressVerified] = useState(false);
-  const [locationData, setLocationData] = useState<{lat?: number, lng?: number}>({});
-  
-  const addressInputRef = useRef<GooglePlacesAddressInputRef>(null);
+  const [availability, setAvailability] = useState<AvailabilitySlot[]>([]);
   const [activeTab, setActiveTab] = useState('personal');
+  const [addressData, setAddressData] = useState<AddressData | null>(null);
 
   const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
   useEffect(() => {
-    if (profileId) {
-      fetchProfile();
+    loadServices();
+    if (mode === 'edit' && profileId) {
+      loadProfile();
+    } else {
+      setInitialLoading(false);
+      initializeDefaultAvailability();
     }
-    fetchServices();
-  }, [profileId]);
+  }, [profileId, mode]);
 
-  const fetchProfile = async () => {
-    if (!profileId) return;
-    
-    try {
-      setLoading(true);
-      
-      const { data: profileData, error } = await supabaseClient
-        .from('therapist_profiles')
-        .select('*')
-        .eq('id', profileId)
-        .single();
-
-      if (error) throw error;
-
-      setProfile(profileData);
-      setAddressVerified(profileData.address_verified || false);
-      setLocationData({
-        lat: profileData.latitude,
-        lng: profileData.longitude
-      });
-
-      // Populate form
-      form.setFieldsValue({
-        ...profileData,
-        service_radius_km: profileData.service_radius_km || 20
-      });
-
-      // Fetch related data
-      await Promise.all([
-        fetchTherapistServices(profileId),
-        fetchTherapistAvailability(profileId)
-      ]);
-
-    } catch (error) {
-      console.error('Error fetching profile:', error);
-      message.error('Failed to load therapist profile');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const fetchServices = async () => {
+  const loadServices = async () => {
     try {
       const { data, error } = await supabaseClient
         .from('services')
         .select('*')
-        .eq('is_active', true)
         .order('name');
 
       if (error) throw error;
       setServices(data || []);
     } catch (error) {
-      console.error('Error fetching services:', error);
+      console.error('Error loading services:', error);
+      message.error('Failed to load services');
     }
   };
 
-  const fetchTherapistServices = async (therapistId: string) => {
+  const loadProfile = async () => {
+    if (!profileId) return;
+
     try {
-      const { data, error } = await supabaseClient
+      setInitialLoading(true);
+
+      // Load profile
+      const { data: profileData, error: profileError } = await supabaseClient
+        .from('therapist_profiles')
+        .select('*')
+        .eq('id', profileId)
+        .single();
+
+      if (profileError) throw profileError;
+
+      setProfile(profileData);
+      form.setFieldsValue(profileData);
+
+      // Load selected services
+      const { data: serviceData, error: serviceError } = await supabaseClient
         .from('therapist_services')
         .select('service_id')
-        .eq('therapist_id', therapistId);
+        .eq('therapist_id', profileId);
 
-      if (error) throw error;
-      setSelectedServices(data?.map(item => item.service_id) || []);
-    } catch (error) {
-      console.error('Error fetching therapist services:', error);
-    }
-  };
+      if (!serviceError && serviceData) {
+        setSelectedServices(serviceData.map((item: any) => item.service_id));
+      }
 
-  const fetchTherapistAvailability = async (therapistId: string) => {
-    try {
-      const { data, error } = await supabaseClient
+      // Load availability
+      const { data: availabilityData, error: availabilityError } = await supabaseClient
         .from('therapist_availability')
         .select('*')
-        .eq('therapist_id', therapistId)
-        .order('day_of_week')
-        .order('start_time');
+        .eq('therapist_id', profileId)
+        .order('day_of_week');
 
-      if (error) throw error;
-      setAvailability(data || []);
+      if (!availabilityError && availabilityData) {
+        setAvailability(availabilityData);
+      } else {
+        initializeDefaultAvailability();
+      }
+
     } catch (error) {
-      console.error('Error fetching availability:', error);
+      console.error('Error loading profile:', error);
+      message.error('Failed to load profile');
+    } finally {
+      setInitialLoading(false);
     }
   };
 
-  const handleAddressSelected = (addressData: any) => {
-    setLocationData({
-      lat: addressData.geometry.lat,
-      lng: addressData.geometry.lng
-    });
-    setAddressVerified(true);
-    
-    // Update form values
-    form.setFieldsValue({
-      home_address: addressData.formatted_address,
-      latitude: addressData.geometry.lat,
-      longitude: addressData.geometry.lng,
-      address_verified: true
-    });
-  };
-
-  const handleValidationChange = (isValid: boolean) => {
-    setAddressVerified(isValid);
-    if (!isValid) {
-      setLocationData({});
-      form.setFieldsValue({
-        latitude: null,
-        longitude: null,
-        address_verified: false
+  const initializeDefaultAvailability = () => {
+    const defaultAvailability: AvailabilitySlot[] = [];
+    for (let day = 1; day <= 5; day++) { // Monday to Friday
+      defaultAvailability.push({
+        day_of_week: day,
+        start_time: '09:00',
+        end_time: '17:00',
+        is_available: true
       });
     }
+    // Weekend
+    defaultAvailability.push({
+      day_of_week: 0, // Sunday
+      start_time: '10:00',
+      end_time: '16:00',
+      is_available: false
+    });
+    defaultAvailability.push({
+      day_of_week: 6, // Saturday
+      start_time: '10:00',
+      end_time: '16:00',
+      is_available: false
+    });
+    setAvailability(defaultAvailability);
   };
 
-  const onFinish = async (values: any) => {
-    try {
-      setSaving(true);
+  const handleAddressSelect = (data: AddressData) => {
+    setAddressData(data);
+    form.setFieldsValue({
+      home_address: data.formatted_address,
+      latitude: data.geometry.lat,
+      longitude: data.geometry.lng
+    });
+  };
 
-      // Validate address is geocoded
-      if (!addressVerified || !locationData.lat || !locationData.lng) {
-        message.error('Please select a valid address from the autocomplete suggestions');
-        setActiveTab('personal');
-        return;
-      }
+  const updateAvailability = (dayOfWeek: number, field: string, value: any) => {
+    setAvailability(prev => prev.map(slot => 
+      slot.day_of_week === dayOfWeek 
+        ? { ...slot, [field]: value }
+        : slot
+    ));
+  };
+
+  const handleSubmit = async (values: any) => {
+    try {
+      setLoading(true);
 
       const profileData = {
         ...values,
-        latitude: locationData.lat,
-        longitude: locationData.lng,
-        address_verified: addressVerified
+        latitude: addressData?.geometry.lat || values.latitude,
+        longitude: addressData?.geometry.lng || values.longitude,
+        updated_at: new Date().toISOString()
       };
 
       let savedProfile;
@@ -263,148 +271,86 @@ const EnhancedTherapistProfileForm: React.FC<EnhancedTherapistProfileFormProps> 
 
       // Save services
       if (savedProfile.id) {
-        await saveTherapistServices(savedProfile.id);
-        await saveTherapistAvailability(savedProfile.id);
+        // Delete existing services
+        await supabaseClient
+          .from('therapist_services')
+          .delete()
+          .eq('therapist_id', savedProfile.id);
+
+        // Insert new services
+        if (selectedServices.length > 0) {
+          const serviceInserts = selectedServices.map((serviceId: string) => ({
+            therapist_id: savedProfile.id,
+            service_id: serviceId
+          }));
+
+          const { error: serviceError } = await supabaseClient
+            .from('therapist_services')
+            .insert(serviceInserts);
+
+          if (serviceError) throw serviceError;
+        }
+
+        // Save availability
+        await supabaseClient
+          .from('therapist_availability')
+          .delete()
+          .eq('therapist_id', savedProfile.id);
+
+        const availabilityInserts = availability.map((slot: AvailabilitySlot) => ({
+          therapist_id: savedProfile.id,
+          day_of_week: slot.day_of_week,
+          start_time: slot.start_time,
+          end_time: slot.end_time,
+          is_available: slot.is_available
+        }));
+
+        const { error: availabilityError } = await supabaseClient
+          .from('therapist_availability')
+          .insert(availabilityInserts);
+
+        if (availabilityError) throw availabilityError;
       }
 
-      message.success('Profile saved successfully!');
-      onSave?.(savedProfile);
+      message.success(`Profile ${mode === 'create' ? 'created' : 'updated'} successfully!`);
+      onSave(savedProfile);
 
     } catch (error) {
       console.error('Error saving profile:', error);
       message.error('Failed to save profile');
     } finally {
-      setSaving(false);
+      setLoading(false);
     }
   };
 
-  const saveTherapistServices = async (therapistId: string) => {
-    try {
-      // Remove existing services
-      await supabaseClient
-        .from('therapist_services')
-        .delete()
-        .eq('therapist_id', therapistId);
-
-      // Add selected services
-      if (selectedServices.length > 0) {
-        const serviceRecords = selectedServices.map(serviceId => ({
-          therapist_id: therapistId,
-          service_id: serviceId
-        }));
-
-        const { error } = await supabaseClient
-          .from('therapist_services')
-          .insert(serviceRecords);
-
-        if (error) throw error;
-      }
-    } catch (error) {
-      console.error('Error saving services:', error);
-      throw error;
-    }
-  };
-
-  const saveTherapistAvailability = async (therapistId: string) => {
-    try {
-      // Remove existing availability
-      await supabaseClient
-        .from('therapist_availability')
-        .delete()
-        .eq('therapist_id', therapistId);
-
-      // Add new availability
-      if (availability.length > 0) {
-        const availabilityRecords = availability.map(item => ({
-          therapist_id: therapistId,
-          day_of_week: item.day_of_week,
-          start_time: item.start_time,
-          end_time: item.end_time
-        }));
-
-        const { error } = await supabaseClient
-          .from('therapist_availability')
-          .insert(availabilityRecords);
-
-        if (error) throw error;
-      }
-    } catch (error) {
-      console.error('Error saving availability:', error);
-      throw error;
-    }
-  };
-
-  const addAvailability = (values: any) => {
-    const newAvailability: Availability = {
-      day_of_week: values.day_of_week,
-      start_time: values.start_time.format('HH:mm:ss'),
-      end_time: values.end_time.format('HH:mm:ss')
-    };
-
-    setAvailability(prev => [...prev, newAvailability]);
-    form.resetFields(['day_of_week', 'start_time', 'end_time']);
-    message.success('Availability added');
-  };
-
-  const removeAvailability = (index: number) => {
-    setAvailability(prev => prev.filter((_, i) => i !== index));
-  };
-
-  const availabilityColumns = [
-    {
-      title: 'Day',
-      dataIndex: 'day_of_week',
-      key: 'day_of_week',
-      render: (day: number) => dayNames[day]
-    },
-    {
-      title: 'Start Time',
-      dataIndex: 'start_time',
-      key: 'start_time',
-      render: (time: string) => dayjs(time, 'HH:mm:ss').format('h:mm A')
-    },
-    {
-      title: 'End Time',
-      dataIndex: 'end_time',
-      key: 'end_time',
-      render: (time: string) => dayjs(time, 'HH:mm:ss').format('h:mm A')
-    },
-    {
-      title: 'Actions',
-      key: 'actions',
-      render: (_: any, __: any, index: number) => (
-        <Popconfirm
-          title="Remove this availability?"
-          onConfirm={() => removeAvailability(index)}
-          okText="Yes"
-          cancelText="No"
-        >
-          <Button type="text" danger icon={<DeleteOutlined />} />
-        </Popconfirm>
-      )
-    }
-  ];
+  if (initialLoading) {
+    return (
+      <div style={{ display: 'flex', justifyContent: 'center', padding: '50px' }}>
+        <Spin size="large" />
+      </div>
+    );
+  }
 
   return (
-    <Card title={`${mode === 'create' ? 'Create' : 'Edit'} Therapist Profile`} loading={loading}>
+    <Card>
       <Form
         form={form}
         layout="vertical"
-        onFinish={onFinish}
+        onFinish={handleSubmit}
         initialValues={{
-          service_radius_km: 20,
           is_active: true,
+          service_radius_km: 50,
           gender: 'prefer_not_to_say'
         }}
       >
         <Tabs activeKey={activeTab} onChange={setActiveTab}>
-          <TabPane tab="Personal Info" key="personal">
-            <Row gutter={[16, 16]}>
+          <TabPane tab={<span><UserOutlined />Personal Info</span>} key="personal">
+            <Row gutter={24}>
               <Col span={12}>
                 <Form.Item
                   label="First Name"
                   name="first_name"
-                  rules={[{ required: true, message: 'First name is required' }]}
+                  rules={[{ required: true, message: 'Please enter first name' }]}
                 >
                   <Input />
                 </Form.Item>
@@ -413,18 +359,21 @@ const EnhancedTherapistProfileForm: React.FC<EnhancedTherapistProfileFormProps> 
                 <Form.Item
                   label="Last Name"
                   name="last_name"
-                  rules={[{ required: true, message: 'Last name is required' }]}
+                  rules={[{ required: true, message: 'Please enter last name' }]}
                 >
                   <Input />
                 </Form.Item>
               </Col>
+            </Row>
+
+            <Row gutter={24}>
               <Col span={12}>
                 <Form.Item
                   label="Email"
                   name="email"
                   rules={[
-                    { required: true, message: 'Email is required' },
-                    { type: 'email', message: 'Please enter a valid email' }
+                    { required: true, message: 'Please enter email' },
+                    { type: 'email', message: 'Please enter valid email' }
                   ]}
                 >
                   <Input />
@@ -435,6 +384,9 @@ const EnhancedTherapistProfileForm: React.FC<EnhancedTherapistProfileFormProps> 
                   <Input />
                 </Form.Item>
               </Col>
+            </Row>
+
+            <Row gutter={24}>
               <Col span={12}>
                 <Form.Item label="Gender" name="gender">
                   <Select>
@@ -446,195 +398,188 @@ const EnhancedTherapistProfileForm: React.FC<EnhancedTherapistProfileFormProps> 
                 </Form.Item>
               </Col>
               <Col span={12}>
-                <Form.Item label="Years Experience" name="years_experience">
+                <Form.Item label="Years of Experience" name="years_experience">
                   <InputNumber min={0} max={50} style={{ width: '100%' }} />
                 </Form.Item>
               </Col>
-              <Col span={24}>
-                <Form.Item label="Bio" name="bio">
-                  <TextArea rows={4} placeholder="Tell us about your experience and specialties..." />
-                </Form.Item>
-              </Col>
             </Row>
+
+            <Form.Item label="Bio" name="bio">
+              <TextArea rows={4} placeholder="Tell us about yourself and your experience..." />
+            </Form.Item>
+
+            <Form.Item label="Active Status" name="is_active" valuePropName="checked">
+              <Switch checkedChildren="Active" unCheckedChildren="Inactive" />
+            </Form.Item>
           </TabPane>
 
-          <TabPane 
-            tab={
-              <span>
-                <EnvironmentOutlined />
-                Location {addressVerified ? <CheckCircleOutlined style={{ color: '#52c41a' }} /> : <WarningOutlined style={{ color: '#fa8c16' }} />}
-              </span>
-            } 
-            key="location"
-          >
+          <TabPane tab={<span><EnvironmentOutlined />Location</span>} key="location">
             <Alert
-              message="Address Geocoding Required"
-              description="Please enter and select your home address from the autocomplete suggestions. This enables distance-based booking assignments."
+              message="Address Geocoding"
+              description="Enter your address to automatically set location coordinates for booking proximity matching."
               type="info"
-              showIcon
-              style={{ marginBottom: 16 }}
+              style={{ marginBottom: 24 }}
             />
-            
-            <Row gutter={[16, 16]}>
-              <Col span={16}>
-                <Form.Item
-                  label="Home Address"
-                  name="home_address"
-                  rules={[{ required: true, message: 'Home address is required' }]}
-                  extra={
-                    addressVerified ? (
-                      <span style={{ color: '#52c41a' }}>
-                        <CheckCircleOutlined /> Address verified and geocoded
-                      </span>
-                    ) : (
-                      <span style={{ color: '#fa8c16' }}>
-                        <WarningOutlined /> Please select an address from the suggestions
-                      </span>
-                    )
-                  }
-                >
-                  <GooglePlacesAddressInput
-                    ref={addressInputRef}
-                    onAddressSelected={handleAddressSelected}
-                    onValidationChange={handleValidationChange}
-                    placeholder="Start typing your address..."
+
+            <Form.Item label="Home Address" name="home_address">
+              <GooglePlacesAddressInput
+                onAddressSelect={handleAddressSelect}
+                placeholder="Start typing your address..."
+              />
+            </Form.Item>
+
+            <Row gutter={24}>
+              <Col span={8}>
+                <Form.Item label="Latitude" name="latitude">
+                  <InputNumber 
+                    style={{ width: '100%' }} 
+                    step={0.000001}
+                    precision={6}
+                    disabled
                   />
                 </Form.Item>
               </Col>
               <Col span={8}>
-                <Form.Item
-                  label="Service Radius (km)"
-                  name="service_radius_km"
-                  rules={[{ required: true, message: 'Service radius is required' }]}
-                >
-                  <InputNumber min={1} max={100} style={{ width: '100%' }} />
+                <Form.Item label="Longitude" name="longitude">
+                  <InputNumber 
+                    style={{ width: '100%' }} 
+                    step={0.000001}
+                    precision={6}
+                    disabled
+                  />
                 </Form.Item>
               </Col>
-              <Col span={24}>
-                <TherapistLocationMap
-                  latitude={locationData.lat}
-                  longitude={locationData.lng}
-                  address={form.getFieldValue('home_address')}
-                  serviceRadius={form.getFieldValue('service_radius_km') || 20}
-                  showRadius={true}
-                  height={300}
-                />
+              <Col span={8}>
+                <Form.Item label="Service Radius (km)" name="service_radius_km">
+                  <InputNumber min={1} max={200} style={{ width: '100%' }} />
+                </Form.Item>
               </Col>
             </Row>
 
-            {/* Hidden fields for lat/lng */}
-            <Form.Item name="latitude" hidden>
-              <InputNumber />
-            </Form.Item>
-            <Form.Item name="longitude" hidden>
-              <InputNumber />
-            </Form.Item>
-            <Form.Item name="address_verified" hidden>
-              <Checkbox />
-            </Form.Item>
+            {form.getFieldValue('latitude') && form.getFieldValue('longitude') && (
+              <TherapistLocationMap
+                address={form.getFieldValue('home_address')}
+                latitude={form.getFieldValue('latitude')}
+                longitude={form.getFieldValue('longitude')}
+                serviceRadius={form.getFieldValue('service_radius_km') || 50}
+                height={300}
+              />
+            )}
           </TabPane>
 
-          <TabPane tab="Services" key="services">
-            <div style={{ marginBottom: 16 }}>
-              <h4>Select Services You Offer</h4>
-              <p style={{ color: '#8c8c8c' }}>Choose which massage services you provide. This determines what customers can book with you.</p>
-            </div>
-            
-            <Row gutter={[8, 8]}>
-              {services.map(service => (
-                <Col span={12} key={service.id}>
-                  <Card 
-                    size="small" 
-                    style={{ 
-                      cursor: 'pointer',
-                      border: selectedServices.includes(service.id) ? '2px solid #1890ff' : '1px solid #d9d9d9'
-                    }}
-                    onClick={() => {
-                      if (selectedServices.includes(service.id)) {
-                        setSelectedServices(prev => prev.filter(id => id !== service.id));
-                      } else {
-                        setSelectedServices(prev => [...prev, service.id]);
-                      }
-                    }}
-                  >
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <div>
-                        <div style={{ fontWeight: 500 }}>{service.name}</div>
-                        <div style={{ fontSize: '12px', color: '#8c8c8c' }}>
-                          Base Price: ${service.service_base_price}
-                        </div>
-                      </div>
-                      <Checkbox 
-                        checked={selectedServices.includes(service.id)}
-                        onChange={() => {}}
-                      />
-                    </div>
-                  </Card>
-                </Col>
-              ))}
-            </Row>
-          </TabPane>
-
-          <TabPane tab="Availability" key="availability">
-            <div style={{ marginBottom: 16 }}>
-              <h4>Set Your Availability</h4>
-              <p style={{ color: '#8c8c8c' }}>Define when you're available for bookings. Customers will only be able to book during these times.</p>
-            </div>
-
-            <Card size="small" title="Add New Availability" style={{ marginBottom: 16 }}>
-              <Form layout="inline" onFinish={addAvailability}>
-                <Form.Item
-                  name="day_of_week"
-                  rules={[{ required: true, message: 'Select a day' }]}
-                >
-                  <Select placeholder="Select Day" style={{ width: 120 }}>
-                    {dayNames.map((day, index) => (
-                      <Option key={index} value={index}>{day}</Option>
-                    ))}
-                  </Select>
-                </Form.Item>
-                <Form.Item
-                  name="start_time"
-                  rules={[{ required: true, message: 'Select start time' }]}
-                >
-                  <TimePicker format="h:mm A" placeholder="Start Time" />
-                </Form.Item>
-                <Form.Item
-                  name="end_time"
-                  rules={[{ required: true, message: 'Select end time' }]}
-                >
-                  <TimePicker format="h:mm A" placeholder="End Time" />
-                </Form.Item>
-                <Form.Item>
-                  <Button type="primary" htmlType="submit" icon={<PlusOutlined />}>
-                    Add
-                  </Button>
-                </Form.Item>
-              </Form>
-            </Card>
-
-            <Table
-              dataSource={availability}
-              columns={availabilityColumns}
-              rowKey={(record, index) => `${record.day_of_week}-${record.start_time}-${index}`}
-              size="small"
-              pagination={false}
+          <TabPane tab={<span><ToolOutlined />Services</span>} key="services">
+            <Alert
+              message="Select Services"
+              description="Choose the massage services you provide. This helps customers find you for specific treatments."
+              type="info"
+              style={{ marginBottom: 24 }}
             />
+
+            <Checkbox.Group
+              value={selectedServices}
+              onChange={setSelectedServices}
+              style={{ width: '100%' }}
+            >
+              <Row gutter={[16, 16]}>
+                {services.map((service: Service) => (
+                  <Col span={12} key={service.id}>
+                    <Card size="small" style={{ cursor: 'pointer' }}>
+                      <Checkbox value={service.id}>
+                        <Space direction="vertical" size="small">
+                          <Text strong>{service.name}</Text>
+                          <Text type="secondary">{service.description}</Text>
+                          <Tag color="blue">Base: ${service.service_base_price}</Tag>
+                        </Space>
+                      </Checkbox>
+                    </Card>
+                  </Col>
+                ))}
+              </Row>
+            </Checkbox.Group>
+
+            {selectedServices.length === 0 && (
+              <Alert
+                message="No services selected"
+                description="Please select at least one service to continue."
+                type="warning"
+                style={{ marginTop: 16 }}
+              />
+            )}
+          </TabPane>
+
+          <TabPane tab={<span><ClockCircleOutlined />Availability</span>} key="availability">
+            <Alert
+              message="Set Your Availability"
+              description="Configure your working hours for each day of the week."
+              type="info"
+              style={{ marginBottom: 24 }}
+            />
+
+            {availability.map((slot: AvailabilitySlot) => (
+              <Card key={slot.day_of_week} size="small" style={{ marginBottom: 16 }}>
+                <Row gutter={16} align="middle">
+                  <Col span={4}>
+                    <Text strong>{dayNames[slot.day_of_week]}</Text>
+                  </Col>
+                  <Col span={3}>
+                    <Switch
+                      checked={slot.is_available}
+                      onChange={(checked) => updateAvailability(slot.day_of_week, 'is_available', checked)}
+                      checkedChildren="Available"
+                      unCheckedChildren="Unavailable"
+                    />
+                  </Col>
+                  <Col span={6}>
+                    <TimePicker
+                      value={dayjs(slot.start_time, 'HH:mm')}
+                      format="HH:mm"
+                      disabled={!slot.is_available}
+                      onChange={(time) => 
+                        updateAvailability(slot.day_of_week, 'start_time', time?.format('HH:mm') || '09:00')
+                      }
+                      style={{ width: '100%' }}
+                    />
+                  </Col>
+                  <Col span={2} style={{ textAlign: 'center' }}>
+                    <Text>to</Text>
+                  </Col>
+                  <Col span={6}>
+                    <TimePicker
+                      value={dayjs(slot.end_time, 'HH:mm')}
+                      format="HH:mm"
+                      disabled={!slot.is_available}
+                      onChange={(time) => 
+                        updateAvailability(slot.day_of_week, 'end_time', time?.format('HH:mm') || '17:00')
+                      }
+                      style={{ width: '100%' }}
+                    />
+                  </Col>
+                </Row>
+              </Card>
+            ))}
           </TabPane>
         </Tabs>
 
         <Divider />
 
-        <Form.Item>
-          <Space>
-            <Button type="primary" htmlType="submit" loading={saving} icon={<SaveOutlined />}>
-              Save Profile
+        <Row justify="end" gutter={16}>
+          <Col>
+            <Button size="large">
+              Cancel
             </Button>
-            <Button onClick={() => form.resetFields()}>
-              Reset
+          </Col>
+          <Col>
+            <Button
+              type="primary"
+              htmlType="submit"
+              size="large"
+              loading={loading}
+              icon={<SaveOutlined />}
+            >
+              {mode === 'create' ? 'Create Profile' : 'Save Changes'}
             </Button>
-          </Space>
-        </Form.Item>
+          </Col>
+        </Row>
       </Form>
     </Card>
   );
