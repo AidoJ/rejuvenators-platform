@@ -1,259 +1,195 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Card, Spin } from 'antd';
-import { EnvironmentOutlined } from '@ant-design/icons';
+import { Card, Spin, Alert } from 'antd';
+
+/// <reference path="../types/google-maps.d.ts" />
 
 interface TherapistLocationMapProps {
+  address?: string;
   latitude?: number;
   longitude?: number;
-  address?: string;
-  serviceRadius?: number; // in kilometers
-  showRadius?: boolean;
+  serviceRadius?: number;
   height?: number;
-  apiKey?: string;
+  showRadius?: boolean;
+  style?: React.CSSProperties;
 }
 
 const TherapistLocationMap: React.FC<TherapistLocationMapProps> = ({
+  address,
   latitude,
   longitude,
-  address,
-  serviceRadius = 20,
+  serviceRadius = 50,
+  height = 400,
   showRadius = true,
-  height = 250,
-  apiKey = process.env.REACT_APP_GOOGLE_MAPS_API_KEY || 'AIzaSyBSFcQHl262KbU3H7-N6AdzEj-VO-wRASI'
+  style
 }) => {
   const mapRef = useRef<HTMLDivElement>(null);
-  const mapInstanceRef = useRef<google.maps.Map | null>(null);
-  const markerRef = useRef<google.maps.Marker | null>(null);
-  const circleRef = useRef<google.maps.Circle | null>(null);
+  const mapInstanceRef = useRef<any>(null);
+  const markerRef = useRef<any>(null);
+  const circleRef = useRef<any>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (latitude && longitude) {
-      loadMap();
+    if (!mapRef.current) return;
+
+    const initializeMap = () => {
+      try {
+        if (!(window as any).google?.maps) {
+          setTimeout(initializeMap, 100);
+          return;
+        }
+
+        // Default to Melbourne if no coordinates provided
+        const defaultLat = latitude || -37.8136;
+        const defaultLng = longitude || 144.9631;
+
+        const map = new (window as any).google.maps.Map(mapRef.current, {
+          zoom: 12,
+          center: { lat: defaultLat, lng: defaultLng },
+          mapTypeControl: false,
+          streetViewControl: false,
+          fullscreenControl: false,
+          styles: [
+            {
+              featureType: 'poi',
+              elementType: 'labels',
+              stylers: [{ visibility: 'off' }]
+            }
+          ]
+        });
+
+        mapInstanceRef.current = map;
+
+        // Add marker if coordinates provided
+        if (latitude && longitude) {
+          updateMapLocation(latitude, longitude);
+        }
+
+        setLoading(false);
+      } catch (err) {
+        console.error('Error initializing map:', err);
+        setError('Failed to load map');
+        setLoading(false);
+      }
+    };
+
+    // Load Google Maps API if not already loaded
+    if (!(window as any).google) {
+      const script = document.createElement('script');
+      script.src = `https://maps.googleapis.com/maps/api/js?key=${process.env.REACT_APP_GOOGLE_MAPS_API_KEY}&libraries=places`;
+      script.onload = initializeMap;
+      script.onerror = () => {
+        setError('Failed to load Google Maps');
+        setLoading(false);
+      };
+      document.head.appendChild(script);
     } else {
-      setLoading(false);
+      initializeMap();
+    }
+  }, []);
+
+  useEffect(() => {
+    if (latitude && longitude && mapInstanceRef.current) {
+      updateMapLocation(latitude, longitude);
     }
   }, [latitude, longitude, serviceRadius, showRadius]);
 
-  const loadMap = async () => {
-    try {
-      setLoading(true);
-      setError(null);
+  const updateMapLocation = (lat: number, lng: number) => {
+    if (!mapInstanceRef.current) return;
 
-      // Check if Google Maps is already loaded
-      if (!window.google?.maps) {
-        await loadGoogleMapsAPI();
-      }
+    const google = (window as any).google;
+    const position = new google.maps.LatLng(lat, lng);
 
-      if (mapRef.current && latitude && longitude) {
-        initializeMap();
-      }
-    } catch (err) {
-      console.error('Error loading map:', err);
-      setError('Failed to load map');
-    } finally {
-      setLoading(false);
-    }
-  };
+    // Update map center
+    mapInstanceRef.current.setCenter(position);
+    mapInstanceRef.current.setZoom(13);
 
-  const loadGoogleMapsAPI = (): Promise<void> => {
-    return new Promise((resolve, reject) => {
-      if (window.google?.maps) {
-        resolve();
-        return;
-      }
-
-      const existingScript = document.querySelector(`script[src*="maps.googleapis.com"]`);
-      if (existingScript) {
-        // Wait for existing script to load
-        existingScript.addEventListener('load', () => resolve());
-        existingScript.addEventListener('error', () => reject(new Error('Failed to load Google Maps')));
-        return;
-      }
-
-      const script = document.createElement('script');
-      script.src = `https://maps.googleapis.com/maps/api/js?key=${apiKey}&libraries=places`;
-      script.async = true;
-      script.defer = true;
-      
-      script.onload = () => resolve();
-      script.onerror = () => reject(new Error('Failed to load Google Maps API'));
-      
-      document.head.appendChild(script);
-    });
-  };
-
-  const initializeMap = () => {
-    if (!mapRef.current || !latitude || !longitude) return;
-
-    const center = new google.maps.LatLng(latitude, longitude);
-
-    // Create map
-    mapInstanceRef.current = new google.maps.Map(mapRef.current, {
-      center: center,
-      zoom: 13,
-      mapTypeId: google.maps.MapTypeId.ROADMAP,
-      disableDefaultUI: false,
-      zoomControl: true,
-      streetViewControl: false,
-      fullscreenControl: false,
-      mapTypeControl: false,
-      styles: [
-        {
-          featureType: 'poi',
-          elementType: 'labels',
-          stylers: [{ visibility: 'off' }]
-        }
-      ]
-    });
-
-    // Add marker
+    // Remove existing marker
     if (markerRef.current) {
       markerRef.current.setMap(null);
     }
 
+    // Add new marker
     markerRef.current = new google.maps.Marker({
-      position: center,
+      position: position,
       map: mapInstanceRef.current,
       title: address || 'Therapist Location',
       icon: {
-        path: google.maps.SymbolPath.CIRCLE,
-        scale: 8,
-        fillColor: '#1890ff',
-        fillOpacity: 1,
-        strokeColor: '#ffffff',
-        strokeWeight: 2
+        url: 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(`
+          <svg width="32" height="32" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg">
+            <circle cx="16" cy="16" r="14" fill="#1890ff" stroke="white" stroke-width="2"/>
+            <circle cx="16" cy="16" r="6" fill="white"/>
+          </svg>
+        `),
+        scaledSize: new google.maps.Size(32, 32),
+        anchor: new google.maps.Point(16, 16)
       }
     });
 
-    // Add service radius circle
-    if (showRadius && serviceRadius > 0) {
-      if (circleRef.current) {
-        circleRef.current.setMap(null);
-      }
+    // Remove existing circle
+    if (circleRef.current) {
+      circleRef.current.setMap(null);
+    }
 
+    // Add service radius circle if enabled
+    if (showRadius && serviceRadius > 0) {
       circleRef.current = new google.maps.Circle({
-        strokeColor: '#1890ff',
-        strokeOpacity: 0.8,
-        strokeWeight: 2,
-        fillColor: '#1890ff',
-        fillOpacity: 0.15,
         map: mapInstanceRef.current,
-        center: center,
-        radius: serviceRadius * 1000 // Convert km to meters
+        center: position,
+        radius: serviceRadius * 1000, // Convert km to meters
+        fillColor: '#1890ff',
+        fillOpacity: 0.1,
+        strokeColor: '#1890ff',
+        strokeOpacity: 0.3,
+        strokeWeight: 2
       });
 
       // Adjust zoom to fit circle
-      const bounds = circleRef.current.getBounds();
-      if (bounds) {
-        mapInstanceRef.current.fitBounds(bounds);
-        
-        // Ensure minimum zoom level
-        const listener = google.maps.event.addListener(mapInstanceRef.current, 'zoom_changed', () => {
-          if (mapInstanceRef.current!.getZoom()! > 15) {
-            mapInstanceRef.current!.setZoom(15);
-          }
-          google.maps.event.removeListener(listener);
-        });
-      }
+      const bounds = new google.maps.LatLngBounds();
+      const radiusInDegrees = serviceRadius / 111; // Rough conversion
+      bounds.extend(new google.maps.LatLng(lat + radiusInDegrees, lng + radiusInDegrees));
+      bounds.extend(new google.maps.LatLng(lat - radiusInDegrees, lng - radiusInDegrees));
+      mapInstanceRef.current.fitBounds(bounds);
     }
   };
-
-  const cleanup = () => {
-    if (markerRef.current) {
-      markerRef.current.setMap(null);
-      markerRef.current = null;
-    }
-    if (circleRef.current) {
-      circleRef.current.setMap(null);
-      circleRef.current = null;
-    }
-    mapInstanceRef.current = null;
-  };
-
-  useEffect(() => {
-    return cleanup;
-  }, []);
-
-  if (!latitude || !longitude) {
-    return (
-      <Card size="small" style={{ height }}>
-        <div 
-          style={{ 
-            height: height - 48, 
-            display: 'flex', 
-            alignItems: 'center', 
-            justifyContent: 'center',
-            color: '#8c8c8c',
-            flexDirection: 'column',
-            gap: 8
-          }}
-        >
-          <EnvironmentOutlined style={{ fontSize: 24 }} />
-          <span>Enter and select an address to see location preview</span>
-        </div>
-      </Card>
-    );
-  }
 
   if (error) {
     return (
-      <Card size="small" style={{ height }}>
-        <div 
-          style={{ 
-            height: height - 48, 
-            display: 'flex', 
-            alignItems: 'center', 
-            justifyContent: 'center',
-            color: '#ff4d4f',
-            flexDirection: 'column',
-            gap: 8
-          }}
-        >
-          <EnvironmentOutlined style={{ fontSize: 24 }} />
-          <span>{error}</span>
-        </div>
-      </Card>
+      <Alert
+        message="Map Error"
+        description={error}
+        type="error"
+        style={{ height, ...style }}
+      />
     );
   }
 
   return (
-    <Card 
-      size="small" 
-      style={{ height }}
-      title={
-        <div style={{ fontSize: '14px', fontWeight: 'normal' }}>
-          📍 Location Preview {showRadius && serviceRadius > 0 && `• ${serviceRadius}km service radius`}
-        </div>
-      }
-    >
-      <div style={{ position: 'relative', height: height - 48 }}>
+    <Card style={style}>
+      <div style={{ position: 'relative', height }}>
         {loading && (
-          <div 
-            style={{ 
-              position: 'absolute', 
-              top: 0, 
-              left: 0, 
-              right: 0, 
-              bottom: 0, 
-              display: 'flex', 
-              alignItems: 'center', 
-              justifyContent: 'center',
-              backgroundColor: 'rgba(255, 255, 255, 0.8)',
-              zIndex: 1
-            }}
-          >
+          <div style={{
+            position: 'absolute',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            background: 'rgba(255, 255, 255, 0.8)',
+            zIndex: 1
+          }}>
             <Spin size="large" />
           </div>
         )}
-        <div 
-          ref={mapRef} 
-          style={{ 
-            width: '100%', 
+        <div
+          ref={mapRef}
+          style={{
+            width: '100%',
             height: '100%',
             borderRadius: '6px'
-          }} 
+          }}
         />
       </div>
     </Card>
