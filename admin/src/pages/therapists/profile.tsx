@@ -57,10 +57,11 @@ const TherapistProfileManagement: React.FC = () => {
   const [initialLoading, setInitialLoading] = useState(!!id);
   const [profile, setProfile] = useState<TherapistProfile | null>(null);
 
-  const profileId = id || identity?.therapist_profile_id;
-  const isOwnProfile = !id || (identity?.therapist_profile_id && id === identity.therapist_profile_id);
-  const isAdmin = identity?.role === 'admin' || identity?.role === 'super_admin';
+  const { data: identity } = useGetIdentity<any>();
 
+const profileId = id || identity?.therapist_profile_id;
+const isOwnProfile = !id || (identity?.therapist_profile_id && id === identity.therapist_profile_id);
+const isAdmin = identity?.role === 'admin' || identity?.role === 'super_admin';
   useEffect(() => {
     if (profileId) {
       loadProfile();
