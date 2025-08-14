@@ -18,8 +18,7 @@ import {
   TimePicker,
   DatePicker,
   Table,
-  Modal,
-  Checkbox
+  Modal
 } from 'antd';
 import {
   UserOutlined,
@@ -29,8 +28,6 @@ import {
   EnvironmentOutlined,
   PhoneOutlined,
   MailOutlined,
-  ClockCircleOutlined,
-  CalendarOutlined,
   PlusOutlined,
   DeleteOutlined
 } from '@ant-design/icons';
@@ -122,7 +119,6 @@ const TherapistProfileManagement: React.FC = () => {
   const loadGoogleMaps = () => {
     if (!(window as any).google) {
       const script = document.createElement('script');
-      // Use VITE_GOOGLE_MAPS_API_KEY instead of REACT_APP_GOOGLE_MAPS_API_KEY
       script.src = `https://maps.googleapis.com/maps/api/js?key=${import.meta.env.VITE_GOOGLE_MAPS_API_KEY}&libraries=places`;
       script.onload = () => {
         setupAddressAutocomplete();
@@ -174,7 +170,6 @@ const TherapistProfileManagement: React.FC = () => {
       setProfile(data);
       form.setFieldsValue(data);
 
-      // Set up image file list if profile pic exists
       if (data.profile_pic) {
         setFileList([{
           uid: '1',
@@ -184,7 +179,6 @@ const TherapistProfileManagement: React.FC = () => {
         }]);
       }
 
-      // Load related data
       await loadAvailability(data.id);
       await loadTimeOff(data.id);
 
@@ -208,7 +202,6 @@ const TherapistProfileManagement: React.FC = () => {
 
       if (error) {
         if (error.code === 'PGRST116') {
-          // No profile found for this user - this is okay for new therapists
           console.log('No existing profile found for user - creating new profile');
           setInitialLoading(false);
           return;
@@ -219,7 +212,6 @@ const TherapistProfileManagement: React.FC = () => {
       setProfile(data);
       form.setFieldsValue(data);
 
-      // Set up image file list if profile pic exists
       if (data.profile_pic) {
         setFileList([{
           uid: '1',
@@ -229,7 +221,6 @@ const TherapistProfileManagement: React.FC = () => {
         }]);
       }
 
-      // Load related data
       await loadAvailability(data.id);
       await loadTimeOff(data.id);
 
@@ -274,7 +265,6 @@ const TherapistProfileManagement: React.FC = () => {
 
   const handleImageUpload = async (file: any) => {
     try {
-      // Convert image to base64 to avoid storage issues
       return new Promise((resolve, reject) => {
         const reader = new FileReader();
         reader.onload = () => resolve(reader.result);
@@ -293,7 +283,6 @@ const TherapistProfileManagement: React.FC = () => {
 
       let profilePicUrl = values.profile_pic;
 
-      // Handle image upload if new file selected
       if (fileList.length > 0 && fileList[0].originFileObj) {
         profilePicUrl = await handleImageUpload(fileList[0].originFileObj);
       }
@@ -306,7 +295,6 @@ const TherapistProfileManagement: React.FC = () => {
       let savedProfile;
 
       if (profile?.id) {
-        // Update existing profile
         const { data, error } = await supabaseClient
           .from('therapist_profiles')
           .update(profileData)
@@ -317,7 +305,6 @@ const TherapistProfileManagement: React.FC = () => {
         if (error) throw error;
         savedProfile = data;
       } else {
-        // Create new profile - include user_id
         const newProfileData = {
           ...profileData,
           user_id: identity?.id
@@ -398,9 +385,14 @@ const TherapistProfileManagement: React.FC = () => {
   };
 
   const handleAddTimeOff = async (values: any) => {
+    if (!profile?.id) {
+      message.error('Please save the profile first before adding time off');
+      return;
+    }
+
     try {
       const timeOffData = {
-        therapist_id: profileId,
+        therapist_id: profile.id,
         start_date: values.dates[0].format('YYYY-MM-DD'),
         end_date: values.dates[1].format('YYYY-MM-DD'),
         start_time: values.start_time?.format('HH:mm:ss'),
@@ -445,7 +437,7 @@ const TherapistProfileManagement: React.FC = () => {
   };
 
   const handleBack = () => {
-    if (isAdmin && !isOwnProfile) {
+    if (isAdmin && id) {
       navigate('/therapists');
     } else {
       navigate('/dashboard');
@@ -456,7 +448,7 @@ const TherapistProfileManagement: React.FC = () => {
     name: 'file',
     listType: 'picture-card' as const,
     fileList: fileList,
-    beforeUpload: () => false, // Prevent auto upload
+    beforeUpload: () => false,
     onChange: ({ fileList: newFileList }: any) => {
       setFileList(newFileList);
     },
@@ -832,7 +824,6 @@ const TherapistProfileManagement: React.FC = () => {
         </Space>
       </Card>
 
-      {/* Availability Modal */}
       <Modal
         title="Add Availability"
         open={availabilityModalVisible}
@@ -881,7 +872,6 @@ const TherapistProfileManagement: React.FC = () => {
         </Form>
       </Modal>
 
-      {/* Time Off Modal */}
       <Modal
         title="Add Time Off"
         open={timeOffModalVisible}
