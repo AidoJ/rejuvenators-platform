@@ -744,9 +744,15 @@ const TherapistProfileManagement: React.FC = () => {
                     type="primary" 
                     icon={<PlusOutlined />}
                     onClick={() => setAvailabilityModalVisible(true)}
+                    disabled={!profile?.id}
                   >
                     Add Availability
                   </Button>
+                  {!profile?.id && (
+                    <div style={{ marginTop: 8, color: '#999' }}>
+                      Please save the profile first before adding availability
+                    </div>
+                  )}
                 </div>
                 
                 <Table 
@@ -763,9 +769,15 @@ const TherapistProfileManagement: React.FC = () => {
                     type="primary" 
                     icon={<PlusOutlined />}
                     onClick={() => setTimeOffModalVisible(true)}
+                    disabled={!profile?.id}
                   >
                     Add Time Off
                   </Button>
+                  {!profile?.id && (
+                    <div style={{ marginTop: 8, color: '#999' }}>
+                      Please save the profile first before adding time off
+                    </div>
+                  )}
                 </div>
                 
                 <Table 
