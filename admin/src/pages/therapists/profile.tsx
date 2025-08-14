@@ -101,22 +101,23 @@ const TherapistProfileManagement: React.FC = () => {
   const [availabilityModalVisible, setAvailabilityModalVisible] = useState(false);
   const [timeOffModalVisible, setTimeOffModalVisible] = useState(false);
 
-  const profileId = id || identity?.therapist_profile_id;
-  const isOwnProfile = !id || (identity?.therapist_profile_id && id === identity.therapist_profile_id);
   const isAdmin = identity?.role === 'admin' || identity?.role === 'super_admin';
+  const isTherapist = identity?.role === 'therapist';
 
   const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
   useEffect(() => {
-    if (profileId) {
-      loadProfile();
-      loadAvailability();
-      loadTimeOff();
+    if (id) {
+      // Admin editing a specific therapist by ID
+      loadProfileById(id);
+    } else if (isTherapist && identity?.id) {
+      // Therapist editing their own profile - lookup by user_id
+      loadProfileByUserId(identity.id);
     } else {
       setInitialLoading(false);
     }
     loadGoogleMaps();
-  }, [profileId]);
+  }, [id, identity]);
 
   const loadGoogleMaps = () => {
     if (!(window as any).google) {
@@ -158,9 +159,7 @@ const TherapistProfileManagement: React.FC = () => {
     }, 100);
   };
 
-  const loadProfile = async () => {
-    if (!profileId) return;
-
+  const loadProfileById = async (profileId: string) => {
     try {
       setInitialLoading(true);
 
@@ -185,6 +184,10 @@ const TherapistProfileManagement: React.FC = () => {
         }]);
       }
 
+      // Load related data
+      await loadAvailability(data.id);
+      await loadTimeOff(data.id);
+
     } catch (error: any) {
       console.error('Error loading profile:', error);
       message.error('Failed to load profile');
@@ -193,14 +196,57 @@ const TherapistProfileManagement: React.FC = () => {
     }
   };
 
-  const loadAvailability = async () => {
-    if (!profileId) return;
+  const loadProfileByUserId = async (userId: string) => {
+    try {
+      setInitialLoading(true);
 
+      const { data, error } = await supabaseClient
+        .from('therapist_profiles')
+        .select('*')
+        .eq('user_id', userId)
+        .single();
+
+      if (error) {
+        if (error.code === 'PGRST116') {
+          // No profile found for this user - this is okay for new therapists
+          console.log('No existing profile found for user - creating new profile');
+          setInitialLoading(false);
+          return;
+        }
+        throw error;
+      }
+
+      setProfile(data);
+      form.setFieldsValue(data);
+
+      // Set up image file list if profile pic exists
+      if (data.profile_pic) {
+        setFileList([{
+          uid: '1',
+          name: 'profile.jpg',
+          status: 'done',
+          url: data.profile_pic
+        }]);
+      }
+
+      // Load related data
+      await loadAvailability(data.id);
+      await loadTimeOff(data.id);
+
+    } catch (error: any) {
+      console.error('Error loading profile:', error);
+      message.error('Failed to load profile');
+    } finally {
+      setInitialLoading(false);
+    }
+  };
+
+  const loadAvailability = async (therapistId: string) => {
     try {
       const { data, error } = await supabaseClient
         .from('therapist_availability')
         .select('*')
-        .eq('therapist_id', profileId)
+        .eq('therapist_id', therapistId)
         .order('day_of_week');
 
       if (error) throw error;
@@ -210,14 +256,12 @@ const TherapistProfileManagement: React.FC = () => {
     }
   };
 
-  const loadTimeOff = async () => {
-    if (!profileId) return;
-
+  const loadTimeOff = async (therapistId: string) => {
     try {
       const { data, error } = await supabaseClient
         .from('therapist_time_off')
         .select('*')
-        .eq('therapist_id', profileId)
+        .eq('therapist_id', therapistId)
         .eq('is_active', true)
         .order('start_date');
 
@@ -256,28 +300,32 @@ const TherapistProfileManagement: React.FC = () => {
 
       const profileData = {
         ...values,
-        profile_pic: profilePicUrl,
-        updated_at: new Date().toISOString()
+        profile_pic: profilePicUrl
       };
 
       let savedProfile;
 
-      if (profileId) {
+      if (profile?.id) {
         // Update existing profile
         const { data, error } = await supabaseClient
           .from('therapist_profiles')
           .update(profileData)
-          .eq('id', profileId)
+          .eq('id', profile.id)
           .select()
           .single();
 
         if (error) throw error;
         savedProfile = data;
       } else {
-        // Create new profile
+        // Create new profile - include user_id
+        const newProfileData = {
+          ...profileData,
+          user_id: identity?.id
+        };
+
         const { data, error } = await supabaseClient
           .from('therapist_profiles')
-          .insert([profileData])
+          .insert([newProfileData])
           .select()
           .single();
 
@@ -285,7 +333,7 @@ const TherapistProfileManagement: React.FC = () => {
         savedProfile = data;
       }
 
-      message.success(`Profile ${profileId ? 'updated' : 'created'} successfully!`);
+      message.success(`Profile ${profile?.id ? 'updated' : 'created'} successfully!`);
       setProfile(savedProfile);
 
       if (profileData.latitude && profileData.longitude) {
@@ -301,9 +349,14 @@ const TherapistProfileManagement: React.FC = () => {
   };
 
   const handleAddAvailability = async (values: any) => {
+    if (!profile?.id) {
+      message.error('Please save the profile first before adding availability');
+      return;
+    }
+
     try {
       const availabilityData = {
-        therapist_id: profileId,
+        therapist_id: profile.id,
         day_of_week: values.day_of_week,
         start_time: values.start_time.format('HH:mm:ss'),
         end_time: values.end_time.format('HH:mm:ss')
@@ -516,7 +569,7 @@ const TherapistProfileManagement: React.FC = () => {
               Back
             </Button>
             <Title level={2} style={{ margin: 0 }}>
-              {profileId ? 'Edit Therapist Profile' : 'Create Therapist Profile'}
+              {profile?.id ? 'Edit Therapist Profile' : 'Create Therapist Profile'}
             </Title>
           </div>
 
@@ -760,7 +813,7 @@ const TherapistProfileManagement: React.FC = () => {
                 loading={loading}
                 icon={<SaveOutlined />}
               >
-                {profileId ? 'Save Changes' : 'Create Profile'}
+                {profile?.id ? 'Save Changes' : 'Create Profile'}
               </Button>
             </div>
           </Form>
