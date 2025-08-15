@@ -48,6 +48,7 @@ import type { TableColumnsType } from 'antd';
 const { Title, Text } = Typography;
 const { RangePicker } = DatePicker;
 const { Option } = Select;
+const { Search } = Input;
 
 // Interfaces
 interface BookingRecord {
@@ -57,6 +58,9 @@ interface BookingRecord {
   payment_status: string;
   price: number;
   therapist_fee?: number;
+  therapist_id?: string;
+  customer_id?: string;
+  service_id?: string;
   address: string;
   notes?: string;
   duration_minutes?: number;
@@ -210,8 +214,8 @@ export const EnhancedBookingList: React.FC = () => {
       const pending = filteredBookings.filter(item => item.status === 'requested');
       const cancelled = filteredBookings.filter(item => item.status === 'cancelled');
       
-      const totalRevenue = completed.reduce((sum, item) => sum + (parseFloat(item.price?.toString()) || 0), 0);
-      const totalFees = completed.reduce((sum, item) => sum + (parseFloat(item.therapist_fee?.toString()) || 0), 0);
+      const totalRevenue = completed.reduce((sum, item) => sum + (parseFloat(item.price?.toString() || '0') || 0), 0);
+      const totalFees = completed.reduce((sum, item) => sum + (parseFloat(item.therapist_fee?.toString() || '0') || 0), 0);
 
       setSummaryStats({
         total: filteredBookings.length,
@@ -397,7 +401,7 @@ export const EnhancedBookingList: React.FC = () => {
         return (
           customerName.toLowerCase().includes(searchLower) ||
           booking.customer_email?.toLowerCase().includes(searchLower) ||
-          booking.customer_phone?.includes(filters.search!) ||
+          booking.customer_phone?.includes(filters.search) ||
           booking.id.toLowerCase().includes(searchLower) ||
           booking.therapist_profiles?.first_name?.toLowerCase().includes(searchLower) ||
           booking.therapist_profiles?.last_name?.toLowerCase().includes(searchLower) ||
@@ -565,8 +569,8 @@ export const EnhancedBookingList: React.FC = () => {
         </Tag>
       ),
     },
+    // ONLY change column title/data for therapists, keep admin view unchanged
     {
-      // Show "Fees" for therapists, "Price" for admins
       title: isTherapist(userRole) ? 'Fees' : 'Price',
       dataIndex: isTherapist(userRole) ? 'therapist_fee' : 'price',
       key: isTherapist(userRole) ? 'therapist_fee' : 'price',
@@ -576,7 +580,7 @@ export const EnhancedBookingList: React.FC = () => {
         </Text>
       ),
     },
-    // Only show "Therapist Fee" column for admins (not therapists)
+    // Only show "Therapist Fee" column for admins (not therapists) - UNCHANGED from original
     ...(canAccess(userRole, 'canViewAllEarnings') && !isTherapist(userRole) ? [{
       title: 'Therapist Fee',
       dataIndex: 'therapist_fee',
@@ -662,7 +666,7 @@ export const EnhancedBookingList: React.FC = () => {
           </Col>
         </Row>
 
-        {/* Summary Statistics */}
+        {/* Summary Statistics - ONLY change for therapists */}
         <Row gutter={16} style={{ marginBottom: 24 }}>
           <Col span={6}>
             <Card>
@@ -711,7 +715,7 @@ export const EnhancedBookingList: React.FC = () => {
         <Card style={{ marginBottom: 16 }}>
           <Row gutter={[16, 16]} align="middle">
             <Col span={6}>
-              <Input
+              <Search
                 placeholder="Search bookings..."
                 value={filters.search}
                 onChange={(e) => setFilters(prev => ({ ...prev, search: e.target.value }))}
