@@ -1,210 +1,272 @@
 import React, { useState, useEffect } from 'react';
-import { 
-  Card, 
-  Col, 
-  Row, 
-  Statistic, 
-  Table, 
-  Tag, 
-  Typography, 
-  Spin,
-  DatePicker,
-  Select,
+import {
+  Card,
+  Table,
   Space,
-  Button
+  Button,
+  Input,
+  Select,
+  DatePicker,
+  Tag,
+  Dropdown,
+  Modal,
+  message,
+  Typography,
+  Row,
+  Col,
+  Statistic,
+  Badge,
+  Tooltip,
+  Popconfirm,
 } from 'antd';
 import {
-  DollarOutlined,
-  CalendarOutlined,
+  SearchOutlined,
+  FilterOutlined,
+  ExportOutlined,
+  EditOutlined,
+  EyeOutlined,
   UserOutlined,
-  CheckCircleOutlined,
+  CalendarOutlined,
+  DollarOutlined,
+  PhoneOutlined,
+  EnvironmentOutlined,
   ClockCircleOutlined,
+  CheckCircleOutlined,
   ExclamationCircleOutlined,
-  PercentageOutlined,
-  TeamOutlined,
-  ReloadOutlined
+  PlusOutlined,
+  ReloadOutlined,
+  MailOutlined,
+  MoreOutlined,
 } from '@ant-design/icons';
-import { useGetIdentity } from '@refinedev/core';
+import { useGetIdentity, useNavigation } from '@refinedev/core';
 import { supabaseClient } from '../../utility';
-import dayjs, { Dayjs } from 'dayjs';
-
-// Import role utilities
-import { UserIdentity, canAccess, isSuperAdmin, isAdmin, isTherapist, getRoleName, getRoleColor } from '../../utils/roleUtils';
+import { UserIdentity, canAccess, isTherapist } from '../../utils/roleUtils';
+import { RoleGuard } from '../../components/RoleGuard';
+import dayjs from 'dayjs';
+import type { TableColumnsType } from 'antd';
 
 const { Title, Text } = Typography;
 const { RangePicker } = DatePicker;
 const { Option } = Select;
+const { Search } = Input;
 
-interface BookingStats {
-  totalBookings: number;
-  totalRevenue: number;
-  totalTherapistFees: number;
-  totalNetMargin: number;
-  activeTherapists: number;
-  completedBookings: number;
-  confirmedBookings: number;
-  pendingBookings: number;
-  cancelledBookings: number;
-  averageBookingValue: number;
-  conversionRate: number;
-}
-
-interface RecentBooking {
+// Interfaces
+interface BookingRecord {
   id: string;
-  customer_name: string;
-  therapist_name: string;
-  service_name: string;
   booking_time: string;
   status: string;
+  payment_status: string;
   price: number;
-  therapist_fee: number;
+  therapist_fee?: number;
+  therapist_id?: string;
+  customer_id?: string;
+  service_id?: string;
+  address: string;
+  notes?: string;
+  duration_minutes?: number;
+  customer_email?: string;
+  customer_phone?: string;
+  booker_name?: string;
+  first_name?: string;
+  last_name?: string;
+  business_name?: string;
+  room_number?: string;
+  created_at: string;
+  customers?: {
+    id: string;
+    first_name: string;
+    last_name: string;
+    email: string;
+    phone?: string;
+  };
+  therapist_profiles?: {
+    id: string;
+    first_name: string;
+    last_name: string;
+    email: string;
+    phone?: string;
+  };
+  services?: {
+    id: string;
+    name: string;
+    description?: string;
+  };
 }
 
-interface DateRange {
-  start: Dayjs;
-  end: Dayjs;
+interface FilterState {
+  status?: string;
+  therapist_id?: string;
+  date_range?: [dayjs.Dayjs, dayjs.Dayjs];
+  search?: string;
+  payment_status?: string;
 }
 
-// Preset date range options
-const DATE_PRESETS = {
-  today: { label: 'Today', days: 0 },
-  week: { label: 'Last 7 Days', days: 7 },
-  month: { label: 'Last 30 Days', days: 30 },
-  quarter: { label: 'Last 90 Days', days: 90 },
-  year: { label: 'Last 365 Days', days: 365 },
-  currentWeek: { label: 'This Week', type: 'week' },
-  currentMonth: { label: 'This Month', type: 'month' },
-  currentQuarter: { label: 'This Quarter', type: 'quarter' },
-  currentYear: { label: 'This Year', type: 'year' }
-};
+interface BookingSummary {
+  total: number;
+  completed: number;
+  confirmed: number;
+  pending: number;
+  cancelled: number;
+  totalRevenue: number;
+  totalFees: number;
+}
 
-export const Dashboard: React.FC = () => {
+interface Therapist {
+  id: string;
+  first_name: string;
+  last_name: string;
+  is_active: boolean;
+}
+
+export const EnhancedBookingList: React.FC = () => {
   const { data: identity } = useGetIdentity<UserIdentity>();
-  const [stats, setStats] = useState<BookingStats | null>(null);
-  const [recentBookings, setRecentBookings] = useState<RecentBooking[]>([]);
-  const [loading, setLoading] = useState(true);
+  const { edit, show, push } = useNavigation();
   
-  // Date range state - default to current month
-  const [dateRange, setDateRange] = useState<DateRange>({
-    start: dayjs().startOf('month'),
-    end: dayjs().endOf('month')
+  const [bookings, setBookings] = useState<BookingRecord[]>([]);
+  const [filteredBookings, setFilteredBookings] = useState<BookingRecord[]>([]);
+  const [therapists, setTherapists] = useState<Therapist[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [selectedRowKeys, setSelectedRowKeys] = useState<React.Key[]>([]);
+  const [filters, setFilters] = useState<FilterState>({});
+  const [summaryStats, setSummaryStats] = useState<BookingSummary>({
+    total: 0,
+    completed: 0,
+    confirmed: 0,
+    pending: 0,
+    cancelled: 0,
+    totalRevenue: 0,
+    totalFees: 0,
   });
-  const [selectedPreset, setSelectedPreset] = useState<string>('currentMonth');
-
+  
   const userRole = identity?.role;
+
+  // Debug function to check database connection and tables
+  const debugDatabase = async () => {
+    console.log('=== DATABASE DEBUG ===');
+    
+    try {
+      // Check if we can connect to bookings table
+      const { count: bookingsCount, error: bookingsError } = await supabaseClient
+        .from('bookings')
+        .select('*', { count: 'exact', head: true });
+      
+      if (bookingsError) {
+        console.error('Bookings table error:', bookingsError);
+      } else {
+        console.log('Bookings table accessible, count:', bookingsCount);
+      }
+
+      // Check customers table
+      const { count: customersCount, error: customersError } = await supabaseClient
+        .from('customers')
+        .select('*', { count: 'exact', head: true });
+      
+      if (customersError) {
+        console.error('Customers table error:', customersError);
+      } else {
+        console.log('Customers table accessible, count:', customersCount);
+      }
+
+      // Check therapist_profiles table
+      const { count: therapistsCount, error: therapistsError } = await supabaseClient
+        .from('therapist_profiles')
+        .select('*', { count: 'exact', head: true });
+      
+      if (therapistsError) {
+        console.error('Therapist profiles table error:', therapistsError);
+      } else {
+        console.log('Therapist profiles table accessible, count:', therapistsCount);
+      }
+
+      // Check services table
+      const { count: servicesCount, error: servicesError } = await supabaseClient
+        .from('services')
+        .select('*', { count: 'exact', head: true });
+      
+      if (servicesError) {
+        console.error('Services table error:', servicesError);
+      } else {
+        console.log('Services table accessible, count:', servicesCount);
+      }
+
+    } catch (error) {
+      console.error('Database connection error:', error);
+    }
+  };
 
   useEffect(() => {
     if (identity) {
-      fetchDashboardData();
+      debugDatabase();
+      fetchBookings();
+      fetchTherapists();
     }
-  }, [identity, dateRange]);
+  }, [identity]);
 
-  const handlePresetChange = (preset: string) => {
-    setSelectedPreset(preset);
-    const now = dayjs();
-    let newRange: DateRange;
+  useEffect(() => {
+    applyFilters();
+  }, [bookings, filters]);
 
-    switch (preset) {
-      case 'today':
-        newRange = {
-          start: now.startOf('day'),
-          end: now.endOf('day')
-        };
-        break;
-      case 'week':
-        newRange = {
-          start: now.subtract(7, 'days').startOf('day'),
-          end: now.endOf('day')
-        };
-        break;
-      case 'month':
-        newRange = {
-          start: now.subtract(30, 'days').startOf('day'),
-          end: now.endOf('day')
-        };
-        break;
-      case 'quarter':
-        newRange = {
-          start: now.subtract(90, 'days').startOf('day'),
-          end: now.endOf('day')
-        };
-        break;
-      case 'year':
-        newRange = {
-          start: now.subtract(365, 'days').startOf('day'),
-          end: now.endOf('day')
-        };
-        break;
-      case 'currentWeek':
-        newRange = {
-          start: now.startOf('week'),
-          end: now.endOf('week')
-        };
-        break;
-      case 'currentMonth':
-        newRange = {
-          start: now.startOf('month'),
-          end: now.endOf('month')
-        };
-        break;
-      case 'currentQuarter':
-        const quarterStart = now.startOf('month').subtract((now.month() % 3), 'month');
-        const quarterEnd = quarterStart.add(2, 'month').endOf('month');
-        newRange = {
-          start: quarterStart,
-          end: quarterEnd
-        };
-        break;
-      case 'currentYear':
-        newRange = {
-          start: now.startOf('year'),
-          end: now.endOf('year')
-        };
-        break;
-      default:
-        newRange = {
-          start: now.startOf('month'),
-          end: now.endOf('month')
-        };
-    }
-    
-    setDateRange(newRange);
-  };
-
-  const handleCustomDateRange = (dates: [Dayjs | null, Dayjs | null] | null) => {
-    if (dates && dates[0] && dates[1]) {
-      setDateRange({
-        start: dates[0].startOf('day'),
-        end: dates[1].endOf('day')
-      });
-      setSelectedPreset('custom');
-    }
-  };
-
-  const calculateMargin = (revenue: number, therapistFees: number): number => {
-    if (revenue === 0) return 0;
-    return ((revenue - therapistFees) / revenue) * 100;
-  };
-
-  const fetchDashboardData = async () => {
-    try {
-      setLoading(true);
+  // Calculate summary statistics whenever filtered bookings change
+  useEffect(() => {
+    if (filteredBookings.length > 0) {
+      const completed = filteredBookings.filter(item => item.status === 'completed');
+      const confirmed = filteredBookings.filter(item => item.status === 'confirmed');
+      const pending = filteredBookings.filter(item => item.status === 'requested');
+      const cancelled = filteredBookings.filter(item => item.status === 'cancelled');
       
-      // Build base query with role-based filtering
-      let bookingsQuery = supabaseClient
+      const totalRevenue = completed.reduce((sum, item) => sum + (parseFloat(item.price?.toString() || '0') || 0), 0);
+      const totalFees = completed.reduce((sum, item) => sum + (parseFloat(item.therapist_fee?.toString() || '0') || 0), 0);
+
+      setSummaryStats({
+        total: filteredBookings.length,
+        completed: completed.length,
+        confirmed: confirmed.length,
+        pending: pending.length,
+        cancelled: cancelled.length,
+        totalRevenue,
+        totalFees,
+      });
+    } else {
+      setSummaryStats({
+        total: 0,
+        completed: 0,
+        confirmed: 0,
+        pending: 0,
+        cancelled: 0,
+        totalRevenue: 0,
+        totalFees: 0,
+      });
+    }
+  }, [filteredBookings]);
+
+  const fetchTherapists = async () => {
+    try {
+      const { data, error } = await supabaseClient
+        .from('therapist_profiles')
+        .select('id, first_name, last_name, is_active')
+        .eq('is_active', true)
+        .order('first_name');
+
+      if (error) throw error;
+      setTherapists(data || []);
+    } catch (error) {
+      console.error('Error fetching therapists:', error);
+      message.error('Failed to load therapist data');
+    }
+  };
+
+  const fetchBookings = async () => {
+    try {
+      console.log('Fetching bookings...');
+      
+      // First, let's just get basic bookings data
+      let query = supabaseClient
         .from('bookings')
-        .select(`
-          *,
-          therapist_profiles!bookings_therapist_id_fkey(first_name, last_name),
-          customers(first_name, last_name),
-          services(name)
-        `)
-        .gte('booking_time', dateRange.start.toISOString())
-        .lte('booking_time', dateRange.end.toISOString());
+        .select('*')
+        .order('booking_time', { ascending: false });
 
       // If therapist, only show their bookings
-      if (isTherapist(userRole) && identity?.id) {
-        // Get therapist profile ID first
+      if (userRole === 'therapist' && identity?.id) {
         const { data: therapistProfile } = await supabaseClient
           .from('therapist_profiles')
           .select('id')
@@ -212,141 +274,279 @@ export const Dashboard: React.FC = () => {
           .single();
         
         if (therapistProfile) {
-          bookingsQuery = bookingsQuery.eq('therapist_id', therapistProfile.id);
+          query = query.eq('therapist_id', therapistProfile.id);
         }
       }
 
-      const { data: bookings, error } = await bookingsQuery;
+      const { data: bookingsData, error: bookingsError } = await query;
+      
+      if (bookingsError) {
+        console.error('Error fetching bookings:', bookingsError);
+        throw bookingsError;
+      }
 
-      if (error) {
-        console.error('Error fetching bookings:', error);
+      console.log('Raw bookings data:', bookingsData);
+
+      if (!bookingsData || bookingsData.length === 0) {
+        console.log('No bookings found');
+        setBookings([]);
         return;
       }
 
-      // Calculate statistics for the selected date range
-      const completedBookings = bookings?.filter(b => b.status === 'completed') || [];
-      const confirmedBookings = bookings?.filter(b => b.status === 'confirmed') || [];
-      const pendingBookings = bookings?.filter(b => b.status === 'requested') || [];
-      const cancelledBookings = bookings?.filter(b => b.status === 'cancelled') || [];
+      // Now let's enrich the data with related information
+      const enrichedBookings = await Promise.all(
+        bookingsData.map(async (booking) => {
+          let enrichedBooking = { ...booking };
 
-      // Calculate revenue (only from completed bookings)
-      const totalRevenue = completedBookings.reduce((sum, b) => sum + (parseFloat(b.price) || 0), 0);
+          // Get customer data
+          if (booking.customer_id) {
+            try {
+              const { data: customer } = await supabaseClient
+                .from('customers')
+                .select('id, first_name, last_name, email, phone')
+                .eq('id', booking.customer_id)
+                .single();
+              
+              if (customer) {
+                enrichedBooking.customers = customer;
+              }
+            } catch (customerError) {
+              console.log('Customer not found for booking:', booking.id);
+            }
+          }
 
-      // Calculate therapist fees (only from completed bookings)
-      const totalTherapistFees = completedBookings.reduce((sum, b) => sum + (parseFloat(b.therapist_fee) || 0), 0);
+          // Get therapist data
+          if (booking.therapist_id) {
+            try {
+              const { data: therapist } = await supabaseClient
+                .from('therapist_profiles')
+                .select('id, first_name, last_name, email, phone')
+                .eq('id', booking.therapist_id)
+                .single();
+              
+              if (therapist) {
+                enrichedBooking.therapist_profiles = therapist;
+              }
+            } catch (therapistError) {
+              console.log('Therapist not found for booking:', booking.id);
+            }
+          }
 
-      // Calculate additional metrics
-      const totalNetMargin = calculateMargin(totalRevenue, totalTherapistFees);
-      
-      // For therapists, calculate average based on fees, for admins based on revenue
-      const averageBookingValue = completedBookings.length > 0 
-        ? (isTherapist(userRole) 
-            ? totalTherapistFees / completedBookings.length 
-            : totalRevenue / completedBookings.length)
-        : 0;
-        
-      const conversionRate = bookings && bookings.length > 0 ? (completedBookings.length / bookings.length) * 100 : 0;
+          // Get service data
+          if (booking.service_id) {
+            try {
+              const { data: service } = await supabaseClient
+                .from('services')
+                .select('id, name, description')
+                .eq('id', booking.service_id)
+                .single();
+              
+              if (service) {
+                enrichedBooking.services = service;
+              }
+            } catch (serviceError) {
+              console.log('Service not found for booking:', booking.id);
+            }
+          }
 
-      // Get active therapists count (admin only)
-      let activeTherapists = 0;
-      if (canAccess(userRole, 'canViewAllTherapists')) {
-        const { data: therapists } = await supabaseClient
-          .from('therapist_profiles')
-          .select('id')
-          .eq('is_active', true);
-        activeTherapists = therapists?.length || 0;
-      }
+          return enrichedBooking;
+        })
+      );
 
-      const dashboardStats: BookingStats = {
-        totalBookings: bookings?.length || 0,
-        totalRevenue,
-        totalTherapistFees,
-        totalNetMargin,
-        activeTherapists,
-        completedBookings: completedBookings.length,
-        confirmedBookings: confirmedBookings.length,
-        pendingBookings: pendingBookings.length,
-        cancelledBookings: cancelledBookings.length,
-        averageBookingValue,
-        conversionRate
-      };
-
-      // Prepare recent bookings (sorted by most recent)
-      const recent = bookings
-        ?.sort((a, b) => dayjs(b.booking_time).unix() - dayjs(a.booking_time).unix())
-        .slice(0, 10)
-        .map(booking => ({
-          id: booking.id,
-          customer_name: booking.customers 
-            ? `${booking.customers.first_name} ${booking.customers.last_name}`
-            : booking.first_name && booking.last_name 
-              ? `${booking.first_name} ${booking.last_name}`
-              : booking.booker_name || 'Unknown Customer',
-          therapist_name: booking.therapist_profiles 
-            ? `${booking.therapist_profiles.first_name} ${booking.therapist_profiles.last_name}`
-            : 'Unassigned',
-          service_name: booking.services?.name || 'Unknown Service',
-          booking_time: booking.booking_time,
-          status: booking.status,
-          price: parseFloat(booking.price) || 0,
-          therapist_fee: parseFloat(booking.therapist_fee) || 0
-        })) || [];
-
-      setStats(dashboardStats);
-      setRecentBookings(recent);
+      console.log('Enriched bookings:', enrichedBookings);
+      setBookings(enrichedBookings);
     } catch (error) {
-      console.error('Error fetching dashboard data:', error);
+      console.error('Error fetching bookings:', error);
+      message.error(`Failed to load bookings: ${error instanceof Error ? error.message : 'Unknown error'}`);
     } finally {
       setLoading(false);
     }
   };
 
-  const getStatusColor = (status: string) => {
-    switch (status) {
-      case 'completed': return 'green';
-      case 'confirmed': return 'blue';
-      case 'requested': return 'orange';
-      case 'cancelled': return 'red';
-      case 'declined': return 'red';
-      default: return 'default';
+  const applyFilters = () => {
+    let filtered = [...bookings];
+
+    // Status filter
+    if (filters.status && filters.status !== 'all') {
+      filtered = filtered.filter(booking => booking.status === filters.status);
     }
+
+    // Therapist filter
+    if (filters.therapist_id && filters.therapist_id !== 'all') {
+      filtered = filtered.filter(booking => booking.therapist_id === filters.therapist_id);
+    }
+
+    // Date range filter
+    if (filters.date_range) {
+      const [start, end] = filters.date_range;
+      filtered = filtered.filter(booking => {
+        const bookingDate = dayjs(booking.booking_time);
+        return bookingDate.isAfter(start.startOf('day')) && bookingDate.isBefore(end.endOf('day'));
+      });
+    }
+
+    // Payment status filter
+    if (filters.payment_status && filters.payment_status !== 'all') {
+      filtered = filtered.filter(booking => booking.payment_status === filters.payment_status);
+    }
+
+    // Search filter
+    if (filters.search) {
+      const searchLower = filters.search.toLowerCase();
+      filtered = filtered.filter(booking => {
+        const customerName = booking.customers 
+          ? `${booking.customers.first_name} ${booking.customers.last_name}`
+          : booking.booker_name || `${booking.first_name || ''} ${booking.last_name || ''}`.trim();
+        
+        return (
+          customerName.toLowerCase().includes(searchLower) ||
+          booking.customer_email?.toLowerCase().includes(searchLower) ||
+          booking.customer_phone?.includes(filters.search) ||
+          booking.id.toLowerCase().includes(searchLower) ||
+          booking.therapist_profiles?.first_name?.toLowerCase().includes(searchLower) ||
+          booking.therapist_profiles?.last_name?.toLowerCase().includes(searchLower) ||
+          booking.services?.name?.toLowerCase().includes(searchLower) ||
+          booking.address?.toLowerCase().includes(searchLower)
+        );
+      });
+    }
+
+    setFilteredBookings(filtered);
+  };
+
+  const handleStatusChange = async (bookingId: string, newStatus: string) => {
+    try {
+      const { error } = await supabaseClient
+        .from('bookings')
+        .update({ status: newStatus })
+        .eq('id', bookingId);
+
+      if (error) throw error;
+
+      message.success(`Booking status updated to ${newStatus}`);
+      fetchBookings(); // Refresh data
+    } catch (error) {
+      console.error('Error updating status:', error);
+      message.error('Failed to update booking status');
+    }
+  };
+
+  const handleBulkStatusChange = async (newStatus: string) => {
+    try {
+      const { error } = await supabaseClient
+        .from('bookings')
+        .update({ status: newStatus })
+        .in('id', selectedRowKeys);
+
+      if (error) throw error;
+
+      message.success(`Updated ${selectedRowKeys.length} bookings to ${newStatus}`);
+      setSelectedRowKeys([]);
+      fetchBookings();
+    } catch (error) {
+      console.error('Error updating bookings:', error);
+      message.error('Failed to update bookings');
+    }
+  };
+
+  const getStatusColor = (status: string) => {
+    const colors = {
+      requested: 'orange',
+      confirmed: 'blue',
+      completed: 'green',
+      cancelled: 'red',
+      declined: 'red',
+      timeout_reassigned: 'purple',
+      seeking_alternate: 'yellow',
+    };
+    return colors[status as keyof typeof colors] || 'default';
   };
 
   const getStatusIcon = (status: string) => {
-    switch (status) {
-      case 'completed': return <CheckCircleOutlined />;
-      case 'confirmed': return <CalendarOutlined />;
-      case 'requested': return <ClockCircleOutlined />;
-      default: return <ExclamationCircleOutlined />;
-    }
+    const icons = {
+      requested: <ClockCircleOutlined />,
+      confirmed: <CalendarOutlined />,
+      completed: <CheckCircleOutlined />,
+      cancelled: <ExclamationCircleOutlined />,
+      declined: <ExclamationCircleOutlined />,
+    };
+    return icons[status as keyof typeof icons] || <ClockCircleOutlined />;
   };
 
-  const recentBookingsColumns = [
+  const getPaymentStatusColor = (status: string) => {
+    const colors = {
+      pending: 'orange',
+      paid: 'green',
+      refunded: 'red',
+    };
+    return colors[status as keyof typeof colors] || 'default';
+  };
+
+  const statusMenuItems = [
+    { key: 'requested', label: 'Mark as Requested', icon: <ClockCircleOutlined /> },
+    { key: 'confirmed', label: 'Mark as Confirmed', icon: <CalendarOutlined /> },
+    { key: 'completed', label: 'Mark as Completed', icon: <CheckCircleOutlined /> },
+    { key: 'cancelled', label: 'Mark as Cancelled', icon: <ExclamationCircleOutlined /> },
+  ];
+
+  const columns: TableColumnsType<BookingRecord> = [
     {
       title: 'Customer',
-      dataIndex: 'customer_name',
-      key: 'customer_name',
-      render: (name: string) => <Text strong>{name}</Text>
-    },
-    {
-      title: 'Therapist',
-      dataIndex: 'therapist_name',
-      key: 'therapist_name',
+      key: 'customer',
+      width: 200,
+      render: (_, record) => {
+        const customerName = record.customers 
+          ? `${record.customers.first_name} ${record.customers.last_name}`
+          : record.booker_name || `${record.first_name || ''} ${record.last_name || ''}`.trim() || 'Unknown Customer';
+        
+        return (
+          <Space direction="vertical" size="small">
+            <Text strong>{customerName}</Text>
+            <Space size="small">
+              {(record.customers?.email || record.customer_email) && (
+                <Tooltip title={record.customers?.email || record.customer_email}>
+                  <MailOutlined style={{ color: '#1890ff' }} />
+                </Tooltip>
+              )}
+              {(record.customers?.phone || record.customer_phone) && (
+                <Tooltip title={record.customers?.phone || record.customer_phone}>
+                  <PhoneOutlined style={{ color: '#52c41a' }} />
+                </Tooltip>
+              )}
+            </Space>
+          </Space>
+        );
+      },
     },
     {
       title: 'Service',
       dataIndex: 'service_name',
       key: 'service_name',
+      render: (_, record) => (
+        <Text>{record.services?.name || 'Unknown Service'}</Text>
+      ),
+    },
+    {
+      title: 'Therapist',
+      dataIndex: 'therapist_name',
+      key: 'therapist_name',
+      render: (_, record) => (
+        <Text>
+          {record.therapist_profiles 
+            ? `${record.therapist_profiles.first_name} ${record.therapist_profiles.last_name}`
+            : 'Unassigned'}
+        </Text>
+      ),
     },
     {
       title: 'Date & Time',
       dataIndex: 'booking_time',
       key: 'booking_time',
       render: (time: string) => (
-        <div>
-          <div>{dayjs(time).format('MMM DD, YYYY')}</div>
-          <Text type="secondary">{dayjs(time).format('h:mm A')}</Text>
-        </div>
+        <Space direction="vertical" size="small">
+          <Text>{dayjs(time).format('MMM DD, YYYY')}</Text>
+          <Text type="secondary">{dayjs(time).format('HH:mm')}</Text>
+        </Space>
       ),
     },
     {
@@ -355,256 +555,273 @@ export const Dashboard: React.FC = () => {
       key: 'status',
       render: (status: string) => (
         <Tag color={getStatusColor(status)} icon={getStatusIcon(status)}>
-          {status.charAt(0).toUpperCase() + status.slice(1)}
+          {status.replace('_', ' ').toUpperCase()}
         </Tag>
       ),
     },
     {
-      // Show "Fees" for therapists, "Price" for admins
+      title: 'Payment',
+      dataIndex: 'payment_status',
+      key: 'payment_status',
+      render: (status: string) => (
+        <Tag color={getPaymentStatusColor(status)}>
+          {status.toUpperCase()}
+        </Tag>
+      ),
+    },
+    // ONLY change column title/data for therapists, keep admin view unchanged
+    {
       title: isTherapist(userRole) ? 'Fees' : 'Price',
       dataIndex: isTherapist(userRole) ? 'therapist_fee' : 'price',
       key: isTherapist(userRole) ? 'therapist_fee' : 'price',
-      render: (amount: number) => `$${amount.toFixed(2)}`,
+      render: (amount: number) => (
+        <Text strong style={{ color: '#52c41a' }}>
+          ${amount?.toFixed(2) || '0.00'}
+        </Text>
+      ),
     },
-    // Only show "Therapist Fee" column for admins (not therapists)
+    // Only show "Therapist Fee" column for admins (not therapists) - UNCHANGED from original
     ...(canAccess(userRole, 'canViewAllEarnings') && !isTherapist(userRole) ? [{
       title: 'Therapist Fee',
       dataIndex: 'therapist_fee',
       key: 'therapist_fee',
-      render: (fee: number) => fee ? `$${fee.toFixed(2)}` : '-',
-    }] : [])
+      render: (fee: number) => (
+        <Text style={{ color: '#fa541c' }}>
+          {fee ? `$${fee.toFixed(2)}` : '-'}
+        </Text>
+      ),
+    }] : []),
+    {
+      title: 'Actions',
+      key: 'actions',
+      render: (_, record) => (
+        <Space>
+          <Tooltip title="View Details">
+            <Button
+              type="text"
+              icon={<EyeOutlined />}
+              onClick={() => show('bookings', record.id)}
+            />
+          </Tooltip>
+          <Tooltip title="Edit Booking">
+            <Button
+              type="text"
+              icon={<EditOutlined />}
+              onClick={() => edit('bookings', record.id)}
+            />
+          </Tooltip>
+          {canAccess(userRole, 'canEditAllBookings') && (
+            <Dropdown
+              menu={{
+                items: statusMenuItems.map(item => ({
+                  ...item,
+                  onClick: () => handleStatusChange(record.id, item.key),
+                  disabled: record.status === item.key,
+                })),
+              }}
+            >
+              <Button type="text" icon={<MoreOutlined />} />
+            </Dropdown>
+          )}
+        </Space>
+      ),
+    },
   ];
 
-  const getDateRangeLabel = () => {
-    if (selectedPreset !== 'custom') {
-      return DATE_PRESETS[selectedPreset as keyof typeof DATE_PRESETS]?.label || 'Custom Range';
-    }
-    return `${dateRange.start.format('MMM DD, YYYY')} - ${dateRange.end.format('MMM DD, YYYY')}`;
+  const rowSelection = {
+    selectedRowKeys,
+    onChange: (newSelectedRowKeys: React.Key[]) => {
+      setSelectedRowKeys(newSelectedRowKeys);
+    },
   };
 
-  if (loading) {
-    return (
-      <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '400px' }}>
-        <Spin size="large" />
-      </div>
-    );
-  }
-
-  if (!identity) {
-    return null;
-  }
-
   return (
-    <div style={{ padding: 24 }}>
-      {/* Header */}
-      <div style={{ marginBottom: 24 }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-          <div>
-            <Title level={2}>
-              {isTherapist(userRole) 
-                ? `Welcome back, ${identity?.first_name || identity?.name || 'Therapist'}!`
-                : `Rejuvenators Dashboard - ${getRoleName(userRole)}`}
-            </Title>
-            <Text type="secondary">
-              {isTherapist(userRole) 
-                ? "Here's an overview of your bookings and performance"
-                : "Overview of your massage booking business"}
-            </Text>
-            <div style={{ marginTop: 8 }}>
-              <Text strong>Period: </Text>
-              <Text>{getDateRangeLabel()}</Text>
-            </div>
-          </div>
-          
-          <Card size="small" style={{ minWidth: 400 }}>
-            <Space direction="vertical" style={{ width: '100%' }}>
-              <div>
-                <Text strong>Quick Select:</Text>
-                <Select
-                  value={selectedPreset}
-                  onChange={handlePresetChange}
-                  style={{ width: '100%', marginTop: 4 }}
+    <RoleGuard requiredPermission="canViewAllBookings">
+      <div style={{ padding: 24 }}>
+        {/* Header */}
+        <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
+          <Col span={12}>
+            <Title level={3}>Bookings</Title>
+          </Col>
+          <Col span={12} style={{ textAlign: 'right' }}>
+            <Space>
+              <Button 
+                icon={<ReloadOutlined />} 
+                onClick={fetchBookings}
+                loading={loading}
+              >
+                Refresh
+              </Button>
+              {canAccess(userRole, 'canCreateBookings') && (
+                <Button
+                  type="primary"
+                  icon={<PlusOutlined />}
+                  href="https://your-booking-platform-url.com"
+                  target="_blank"
                 >
-                  {Object.entries(DATE_PRESETS).map(([key, preset]) => (
-                    <Option key={key} value={key}>{preset.label}</Option>
-                  ))}
-                </Select>
-              </div>
-              <div>
-                <Text strong>Custom Range:</Text>
-                <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
-                  <RangePicker
-                    value={selectedPreset === 'custom' ? [dateRange.start, dateRange.end] : null}
-                    onChange={handleCustomDateRange}
-                    style={{ flex: 1 }}
-                  />
-                  <Button 
-                    icon={<ReloadOutlined />} 
-                    onClick={fetchDashboardData}
-                    loading={loading}
-                  >
-                    Refresh
-                  </Button>
-                </div>
-              </div>
+                  New Booking
+                </Button>
+              )}
             </Space>
-          </Card>
-        </div>
+          </Col>
+        </Row>
+
+        {/* Summary Statistics - ONLY change for therapists */}
+        <Row gutter={16} style={{ marginBottom: 24 }}>
+          <Col span={6}>
+            <Card>
+              <Statistic
+                title="Total Bookings"
+                value={summaryStats.total}
+                prefix={<CalendarOutlined />}
+                valueStyle={{ color: '#1890ff' }}
+              />
+            </Card>
+          </Col>
+          <Col span={6}>
+            <Card>
+              <Statistic
+                title="Completed"
+                value={summaryStats.completed}
+                prefix={<CheckCircleOutlined />}
+                valueStyle={{ color: '#52c41a' }}
+              />
+            </Card>
+          </Col>
+          <Col span={6}>
+            <Card>
+              <Statistic
+                title="Confirmed"
+                value={summaryStats.confirmed}
+                prefix={<CalendarOutlined />}
+                valueStyle={{ color: '#1890ff' }}
+              />
+            </Card>
+          </Col>
+          <Col span={6}>
+            <Card>
+              <Statistic
+                title={isTherapist(userRole) ? "Total Fees" : "Revenue"}
+                value={isTherapist(userRole) ? summaryStats.totalFees : summaryStats.totalRevenue}
+                prefix={<DollarOutlined />}
+                precision={2}
+                valueStyle={{ color: '#52c41a' }}
+              />
+            </Card>
+          </Col>
+        </Row>
+
+        {/* Filters */}
+        <Card style={{ marginBottom: 16 }}>
+          <Row gutter={[16, 16]} align="middle">
+            <Col span={6}>
+              <Search
+                placeholder="Search bookings..."
+                value={filters.search}
+                onChange={(e) => setFilters(prev => ({ ...prev, search: e.target.value }))}
+                onSearch={() => applyFilters()}
+                allowClear
+              />
+            </Col>
+            <Col span={4}>
+              <Select
+                placeholder="Status"
+                value={filters.status}
+                onChange={(value) => setFilters(prev => ({ ...prev, status: value }))}
+                style={{ width: '100%' }}
+                allowClear
+              >
+                <Option value="all">All Status</Option>
+                <Option value="requested">Requested</Option>
+                <Option value="confirmed">Confirmed</Option>
+                <Option value="completed">Completed</Option>
+                <Option value="cancelled">Cancelled</Option>
+                <Option value="declined">Declined</Option>
+              </Select>
+            </Col>
+            <Col span={4}>
+              <Select
+                placeholder="Payment Status"
+                value={filters.payment_status}
+                onChange={(value) => setFilters(prev => ({ ...prev, payment_status: value }))}
+                style={{ width: '100%' }}
+                allowClear
+              >
+                <Option value="all">All Payment</Option>
+                <Option value="pending">Pending</Option>
+                <Option value="paid">Paid</Option>
+                <Option value="refunded">Refunded</Option>
+              </Select>
+            </Col>
+            <Col span={6}>
+              <RangePicker
+                style={{ width: '100%' }}
+                onChange={(dates) => setFilters(prev => ({ 
+                  ...prev, 
+                  date_range: dates ? [dates[0]!, dates[1]!] : undefined 
+                }))}
+              />
+            </Col>
+            <Col span={4}>
+              <Button
+                onClick={() => setFilters({})}
+                style={{ width: '100%' }}
+              >
+                Clear Filters
+              </Button>
+            </Col>
+          </Row>
+
+          {/* Bulk Actions */}
+          {selectedRowKeys.length > 0 && canAccess(userRole, 'canEditAllBookings') && (
+            <Row style={{ marginTop: 16, padding: '12px', backgroundColor: '#f0f9ff', borderRadius: '6px' }}>
+              <Col span={24}>
+                <Space>
+                  <Text strong>{selectedRowKeys.length} bookings selected</Text>
+                  <Dropdown
+                    menu={{
+                      items: statusMenuItems.map(item => ({
+                        ...item,
+                        onClick: () => handleBulkStatusChange(item.key),
+                      })),
+                    }}
+                  >
+                    <Button type="primary" size="small">
+                      Bulk Status Change
+                    </Button>
+                  </Dropdown>
+                  <Button 
+                    size="small" 
+                    onClick={() => setSelectedRowKeys([])}
+                  >
+                    Clear Selection
+                  </Button>
+                </Space>
+              </Col>
+            </Row>
+          )}
+        </Card>
+
+        {/* Bookings Table */}
+        <Card>
+          <Table<BookingRecord>
+            columns={columns}
+            dataSource={filteredBookings}
+            rowKey="id"
+            loading={loading}
+            rowSelection={canAccess(userRole, 'canEditAllBookings') ? rowSelection : undefined}
+            pagination={{
+              pageSize: 20,
+              showSizeChanger: true,
+              showQuickJumper: true,
+              showTotal: (total, range) => 
+                `${range[0]}-${range[1]} of ${total} bookings`,
+            }}
+            scroll={{ x: 1200 }}
+            size="small"
+          />
+        </Card>
       </div>
-
-      {/* Key Statistics */}
-      <Row gutter={16} style={{ marginBottom: 24 }}>
-        <Col span={6}>
-          <Card>
-            <Statistic
-              title="Total Bookings"
-              value={stats?.totalBookings || 0}
-              prefix={<CalendarOutlined />}
-              valueStyle={{ color: '#1890ff' }}
-            />
-          </Card>
-        </Col>
-        <Col span={6}>
-          <Card>
-            <Statistic
-              title={isTherapist(userRole) ? "Total Fees" : "Total Revenue"}
-              value={isTherapist(userRole) ? stats?.totalTherapistFees || 0 : stats?.totalRevenue || 0}
-              prefix={<DollarOutlined />}
-              precision={2}
-              valueStyle={{ color: '#52c41a' }}
-            />
-          </Card>
-        </Col>
-        <Col span={6}>
-          <Card>
-            <Statistic
-              title={isTherapist(userRole) ? "Avg Fee Value" : "Avg Booking Value"}
-              value={stats?.averageBookingValue || 0}
-              prefix={<DollarOutlined />}
-              precision={2}
-              valueStyle={{ color: '#722ed1' }}
-            />
-          </Card>
-        </Col>
-        <Col span={6}>
-          <Card>
-            <Statistic
-              title={canAccess(userRole, 'canViewAllTherapists') ? "Active Therapists" : "Your Completed"}
-              value={canAccess(userRole, 'canViewAllTherapists') ? stats?.activeTherapists || 0 : stats?.completedBookings || 0}
-              prefix={canAccess(userRole, 'canViewAllTherapists') ? <UserOutlined /> : <CheckCircleOutlined />}
-              valueStyle={{ color: '#722ed1' }}
-            />
-          </Card>
-        </Col>
-      </Row>
-
-      {/* Admin-specific Statistics */}
-      {canAccess(userRole, 'canViewAllEarnings') && (
-        <>
-          {/* Therapist Fees and Margins */}
-          <Row gutter={16} style={{ marginBottom: 24 }}>
-            <Col span={8}>
-              <Card>
-                <Statistic
-                  title="Total Therapist Fees"
-                  value={stats?.totalTherapistFees || 0}
-                  prefix={<TeamOutlined />}
-                  precision={2}
-                  valueStyle={{ color: '#fa541c' }}
-                />
-              </Card>
-            </Col>
-            <Col span={8}>
-              <Card>
-                <Statistic
-                  title="Net Margin"
-                  value={stats?.totalNetMargin || 0}
-                  prefix={<PercentageOutlined />}
-                  precision={1}
-                  suffix="%"
-                  valueStyle={{ 
-                    color: (stats?.totalNetMargin || 0) >= 50 
-                      ? '#52c41a' 
-                      : (stats?.totalNetMargin || 0) >= 30 
-                        ? '#fa8c16' 
-                        : '#f5222d'
-                  }}
-                />
-              </Card>
-            </Col>
-            <Col span={8}>
-              <Card>
-                <Statistic
-                  title="Conversion Rate"
-                  value={stats?.conversionRate || 0}
-                  prefix={<PercentageOutlined />}
-                  precision={1}
-                  suffix="%"
-                  valueStyle={{ color: '#1890ff' }}
-                />
-              </Card>
-            </Col>
-          </Row>
-
-          {/* Booking Status Breakdown */}
-          <Row gutter={16} style={{ marginBottom: 24 }}>
-            <Col span={6}>
-              <Card>
-                <Statistic
-                  title="Completed"
-                  value={stats?.completedBookings || 0}
-                  prefix={<CheckCircleOutlined />}
-                  valueStyle={{ color: '#52c41a' }}
-                />
-              </Card>
-            </Col>
-            <Col span={6}>
-              <Card>
-                <Statistic
-                  title="Confirmed"
-                  value={stats?.confirmedBookings || 0}
-                  prefix={<CalendarOutlined />}
-                  valueStyle={{ color: '#1890ff' }}
-                />
-              </Card>
-            </Col>
-            <Col span={6}>
-              <Card>
-                <Statistic
-                  title="Pending"
-                  value={stats?.pendingBookings || 0}
-                  prefix={<ClockCircleOutlined />}
-                  valueStyle={{ color: '#fa8c16' }}
-                />
-              </Card>
-            </Col>
-            <Col span={6}>
-              <Card>
-                <Statistic
-                  title="Cancelled"
-                  value={stats?.cancelledBookings || 0}
-                  prefix={<ExclamationCircleOutlined />}
-                  valueStyle={{ color: '#f5222d' }}
-                />
-              </Card>
-            </Col>
-          </Row>
-        </>
-      )}
-
-      {/* Recent Bookings Table */}
-      <Card 
-        title={isTherapist(userRole) ? "Your Recent Bookings" : "Recent Bookings"} 
-        style={{ marginBottom: 24 }}
-      >
-        <Table
-          dataSource={recentBookings}
-          columns={recentBookingsColumns}
-          rowKey="id"
-          pagination={{ pageSize: 10 }}
-          scroll={{ x: 800 }}
-        />
-      </Card>
-    </div>
+    </RoleGuard>
   );
 };
