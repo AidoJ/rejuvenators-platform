@@ -57,7 +57,7 @@ interface RecentBooking {
   booking_time: string;
   status: string;
   price: number;
-  therapist_fee?: number;
+  therapist_fee: number;
 }
 
 interface DateRange {
@@ -237,7 +237,14 @@ export const Dashboard: React.FC = () => {
 
       // Calculate additional metrics
       const totalNetMargin = calculateMargin(totalRevenue, totalTherapistFees);
-      const averageBookingValue = completedBookings.length > 0 ? totalRevenue / completedBookings.length : 0;
+      
+      // For therapists, calculate average based on fees, for admins based on revenue
+      const averageBookingValue = completedBookings.length > 0 
+        ? (isTherapist(userRole) 
+            ? totalTherapistFees / completedBookings.length 
+            : totalRevenue / completedBookings.length)
+        : 0;
+        
       const conversionRate = bookings && bookings.length > 0 ? (completedBookings.length / bookings.length) * 100 : 0;
 
       // Get active therapists count (admin only)
@@ -353,20 +360,22 @@ export const Dashboard: React.FC = () => {
       ),
     },
     {
-      title: 'Price',
-      dataIndex: 'price',
-      key: 'price',
-      render: (price: number) => `$${price.toFixed(2)}`,
+      // Show "Fees" for therapists, "Price" for admins
+      title: isTherapist(userRole) ? 'Fees' : 'Price',
+      dataIndex: isTherapist(userRole) ? 'therapist_fee' : 'price',
+      key: isTherapist(userRole) ? 'therapist_fee' : 'price',
+      render: (amount: number) => `$${amount.toFixed(2)}`,
     },
-    ...(canAccess(userRole, 'canViewAllEarnings') ? [{
+    // Only show "Therapist Fee" column for admins (not therapists)
+    ...(canAccess(userRole, 'canViewAllEarnings') && !isTherapist(userRole) ? [{
       title: 'Therapist Fee',
       dataIndex: 'therapist_fee',
       key: 'therapist_fee',
       render: (fee: number) => fee ? `$${fee.toFixed(2)}` : '-',
-    }] : []),
+    }] : [])
   ];
 
-  const formatDateRange = () => {
+  const getDateRangeLabel = () => {
     if (selectedPreset !== 'custom') {
       return DATE_PRESETS[selectedPreset as keyof typeof DATE_PRESETS]?.label || 'Custom Range';
     }
@@ -381,39 +390,32 @@ export const Dashboard: React.FC = () => {
     );
   }
 
-  // Show loading if no identity yet
   if (!identity) {
-    return (
-      <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '400px' }}>
-        <Spin size="large" />
-      </div>
-    );
+    return null;
   }
 
   return (
     <div style={{ padding: 24 }}>
+      {/* Header */}
       <div style={{ marginBottom: 24 }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
           <div>
             <Title level={2}>
               {isTherapist(userRole) 
-                ? `Welcome back, ${identity?.first_name || identity?.name || 'Therapist'}!` 
-                : `Rejuvenators Dashboard - ${getRoleName(userRole)}`
-              }
+                ? `Welcome back, ${identity?.first_name || identity?.name || 'Therapist'}!`
+                : `Rejuvenators Dashboard - ${getRoleName(userRole)}`}
             </Title>
             <Text type="secondary">
               {isTherapist(userRole) 
-                ? 'Here\'s an overview of your bookings and performance'
-                : 'Overview of your massage booking business'
-              }
+                ? "Here's an overview of your bookings and performance"
+                : "Overview of your massage booking business"}
             </Text>
             <div style={{ marginTop: 8 }}>
               <Text strong>Period: </Text>
-              <Text>{formatDateRange()}</Text>
+              <Text>{getDateRangeLabel()}</Text>
             </div>
           </div>
           
-          {/* Date Range Controls */}
           <Card size="small" style={{ minWidth: 400 }}>
             <Space direction="vertical" style={{ width: '100%' }}>
               <div>
@@ -423,12 +425,11 @@ export const Dashboard: React.FC = () => {
                   onChange={handlePresetChange}
                   style={{ width: '100%', marginTop: 4 }}
                 >
-                  {Object.entries(DATE_PRESETS).map(([key, value]) => (
-                    <Option key={key} value={key}>{value.label}</Option>
+                  {Object.entries(DATE_PRESETS).map(([key, preset]) => (
+                    <Option key={key} value={key}>{preset.label}</Option>
                   ))}
                 </Select>
               </div>
-              
               <div>
                 <Text strong>Custom Range:</Text>
                 <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
@@ -466,8 +467,8 @@ export const Dashboard: React.FC = () => {
         <Col span={6}>
           <Card>
             <Statistic
-              title="Total Revenue"
-              value={stats?.totalRevenue || 0}
+              title={isTherapist(userRole) ? "Total Fees" : "Total Revenue"}
+              value={isTherapist(userRole) ? stats?.totalTherapistFees || 0 : stats?.totalRevenue || 0}
               prefix={<DollarOutlined />}
               precision={2}
               valueStyle={{ color: '#52c41a' }}
@@ -477,7 +478,7 @@ export const Dashboard: React.FC = () => {
         <Col span={6}>
           <Card>
             <Statistic
-              title="Avg Booking Value"
+              title={isTherapist(userRole) ? "Avg Fee Value" : "Avg Booking Value"}
               value={stats?.averageBookingValue || 0}
               prefix={<DollarOutlined />}
               precision={2}
@@ -522,8 +523,11 @@ export const Dashboard: React.FC = () => {
                   precision={1}
                   suffix="%"
                   valueStyle={{ 
-                    color: (stats?.totalNetMargin || 0) >= 50 ? '#52c41a' : 
-                           (stats?.totalNetMargin || 0) >= 30 ? '#fa8c16' : '#ff4d4f' 
+                    color: (stats?.totalNetMargin || 0) >= 50 
+                      ? '#52c41a' 
+                      : (stats?.totalNetMargin || 0) >= 30 
+                        ? '#fa8c16' 
+                        : '#f5222d'
                   }}
                 />
               </Card>
@@ -536,7 +540,51 @@ export const Dashboard: React.FC = () => {
                   prefix={<PercentageOutlined />}
                   precision={1}
                   suffix="%"
+                  valueStyle={{ color: '#1890ff' }}
+                />
+              </Card>
+            </Col>
+          </Row>
+
+          {/* Booking Status Breakdown */}
+          <Row gutter={16} style={{ marginBottom: 24 }}>
+            <Col span={6}>
+              <Card>
+                <Statistic
+                  title="Completed"
+                  value={stats?.completedBookings || 0}
+                  prefix={<CheckCircleOutlined />}
+                  valueStyle={{ color: '#52c41a' }}
+                />
+              </Card>
+            </Col>
+            <Col span={6}>
+              <Card>
+                <Statistic
+                  title="Confirmed"
+                  value={stats?.confirmedBookings || 0}
+                  prefix={<CalendarOutlined />}
+                  valueStyle={{ color: '#1890ff' }}
+                />
+              </Card>
+            </Col>
+            <Col span={6}>
+              <Card>
+                <Statistic
+                  title="Pending"
+                  value={stats?.pendingBookings || 0}
+                  prefix={<ClockCircleOutlined />}
                   valueStyle={{ color: '#fa8c16' }}
+                />
+              </Card>
+            </Col>
+            <Col span={6}>
+              <Card>
+                <Statistic
+                  title="Cancelled"
+                  value={stats?.cancelledBookings || 0}
+                  prefix={<ExclamationCircleOutlined />}
+                  valueStyle={{ color: '#f5222d' }}
                 />
               </Card>
             </Col>
@@ -544,63 +592,17 @@ export const Dashboard: React.FC = () => {
         </>
       )}
 
-      {/* Booking Status Overview */}
-      <Row gutter={16} style={{ marginBottom: 24 }}>
-        <Col span={6}>
-          <Card>
-            <Statistic
-              title="Completed"
-              value={stats?.completedBookings || 0}
-              prefix={<CheckCircleOutlined />}
-              valueStyle={{ color: '#52c41a' }}
-            />
-          </Card>
-        </Col>
-        <Col span={6}>
-          <Card>
-            <Statistic
-              title="Confirmed"  
-              value={stats?.confirmedBookings || 0}
-              prefix={<CalendarOutlined />}
-              valueStyle={{ color: '#1890ff' }}
-            />
-          </Card>
-        </Col>
-        <Col span={6}>
-          <Card>
-            <Statistic
-              title="Pending"
-              value={stats?.pendingBookings || 0}
-              prefix={<ClockCircleOutlined />}
-              valueStyle={{ color: '#fa8c16' }}
-            />
-          </Card>
-        </Col>
-        <Col span={6}>
-          <Card>
-            <Statistic
-              title="Cancelled"
-              value={stats?.cancelledBookings || 0}
-              prefix={<ExclamationCircleOutlined />}
-              valueStyle={{ color: '#ff4d4f' }}
-            />
-          </Card>
-        </Col>
-      </Row>
-
-      {/* Recent Bookings */}
-      <Card title={`Bookings in Selected Period (${stats?.totalBookings || 0} total)`} style={{ marginBottom: 24 }}>
+      {/* Recent Bookings Table */}
+      <Card 
+        title={isTherapist(userRole) ? "Your Recent Bookings" : "Recent Bookings"} 
+        style={{ marginBottom: 24 }}
+      >
         <Table
           dataSource={recentBookings}
           columns={recentBookingsColumns}
           rowKey="id"
-          pagination={{ 
-            pageSize: 10,
-            showSizeChanger: true,
-            showQuickJumper: true,
-            showTotal: (total, range) => `${range[0]}-${range[1]} of ${total} bookings`
-          }}
-          size="middle"
+          pagination={{ pageSize: 10 }}
+          scroll={{ x: 800 }}
         />
       </Card>
     </div>
