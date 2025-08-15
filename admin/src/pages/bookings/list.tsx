@@ -35,10 +35,12 @@ import {
   ExclamationCircleOutlined,
   PlusOutlined,
   ReloadOutlined,
+  MailOutlined,
+  MoreOutlined,
 } from '@ant-design/icons';
 import { useGetIdentity, useNavigation } from '@refinedev/core';
 import { supabaseClient } from '../../utility';
-import { UserIdentity, canAccess } from '../../utils/roleUtils';
+import { UserIdentity, canAccess, isTherapist } from '../../utils/roleUtils';
 import { RoleGuard } from '../../components/RoleGuard';
 import dayjs from 'dayjs';
 import type { TableColumnsType } from 'antd';
@@ -95,6 +97,16 @@ interface FilterState {
   payment_status?: string;
 }
 
+interface BookingSummary {
+  total: number;
+  completed: number;
+  confirmed: number;
+  pending: number;
+  cancelled: number;
+  totalRevenue: number;
+  totalFees: number;
+}
+
 interface Therapist {
   id: string;
   first_name: string;
@@ -112,6 +124,15 @@ export const EnhancedBookingList: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [selectedRowKeys, setSelectedRowKeys] = useState<React.Key[]>([]);
   const [filters, setFilters] = useState<FilterState>({});
+  const [summaryStats, setSummaryStats] = useState<BookingSummary>({
+    total: 0,
+    completed: 0,
+    confirmed: 0,
+    pending: 0,
+    cancelled: 0,
+    totalRevenue: 0,
+    totalFees: 0,
+  });
   
   const userRole = identity?.role;
 
@@ -148,9 +169,9 @@ export const EnhancedBookingList: React.FC = () => {
         .select('*', { count: 'exact', head: true });
       
       if (therapistsError) {
-        console.error('Therapist_profiles table error:', therapistsError);
+        console.error('Therapist profiles table error:', therapistsError);
       } else {
-        console.log('Therapist_profiles table accessible, count:', therapistsCount);
+        console.log('Therapist profiles table accessible, count:', therapistsCount);
       }
 
       // Check services table
@@ -164,45 +185,69 @@ export const EnhancedBookingList: React.FC = () => {
         console.log('Services table accessible, count:', servicesCount);
       }
 
-      // Get first few booking records to see structure
-      const { data: sampleBookings, error: sampleError } = await supabaseClient
-        .from('bookings')
-        .select('*')
-        .limit(3);
-      
-      if (sampleError) {
-        console.error('Sample bookings error:', sampleError);
-      } else {
-        console.log('Sample bookings:', sampleBookings);
-      }
-
     } catch (error) {
-      console.error('Debug error:', error);
+      console.error('Database connection error:', error);
     }
-    
-    console.log('=== END DEBUG ===');
   };
 
   useEffect(() => {
     if (identity) {
-      debugDatabase(); // Debug first
-      fetchData();
+      debugDatabase();
+      fetchBookings();
+      fetchTherapists();
     }
   }, [identity]);
 
   useEffect(() => {
     applyFilters();
-  }, [filters, bookings]);
+  }, [bookings, filters]);
 
-  const fetchData = async () => {
+  // Calculate summary statistics whenever filtered bookings change
+  useEffect(() => {
+    if (filteredBookings.length > 0) {
+      const completed = filteredBookings.filter(item => item.status === 'completed');
+      const confirmed = filteredBookings.filter(item => item.status === 'confirmed');
+      const pending = filteredBookings.filter(item => item.status === 'requested');
+      const cancelled = filteredBookings.filter(item => item.status === 'cancelled');
+      
+      const totalRevenue = completed.reduce((sum, item) => sum + (parseFloat(item.price?.toString()) || 0), 0);
+      const totalFees = completed.reduce((sum, item) => sum + (parseFloat(item.therapist_fee?.toString()) || 0), 0);
+
+      setSummaryStats({
+        total: filteredBookings.length,
+        completed: completed.length,
+        confirmed: confirmed.length,
+        pending: pending.length,
+        cancelled: cancelled.length,
+        totalRevenue,
+        totalFees,
+      });
+    } else {
+      setSummaryStats({
+        total: 0,
+        completed: 0,
+        confirmed: 0,
+        pending: 0,
+        cancelled: 0,
+        totalRevenue: 0,
+        totalFees: 0,
+      });
+    }
+  }, [filteredBookings]);
+
+  const fetchTherapists = async () => {
     try {
-      setLoading(true);
-      await Promise.all([fetchBookings(), fetchTherapists()]);
+      const { data, error } = await supabaseClient
+        .from('therapist_profiles')
+        .select('id, first_name, last_name, is_active')
+        .eq('is_active', true)
+        .order('first_name');
+
+      if (error) throw error;
+      setTherapists(data || []);
     } catch (error) {
-      console.error('Error fetching data:', error);
-      message.error('Failed to load booking data');
-    } finally {
-      setLoading(false);
+      console.error('Error fetching therapists:', error);
+      message.error('Failed to load therapist data');
     }
   };
 
@@ -309,21 +354,8 @@ export const EnhancedBookingList: React.FC = () => {
     } catch (error) {
       console.error('Error fetching bookings:', error);
       message.error(`Failed to load bookings: ${error instanceof Error ? error.message : 'Unknown error'}`);
-    }
-  };
-
-  const fetchTherapists = async () => {
-    try {
-      const { data, error } = await supabaseClient
-        .from('therapist_profiles')
-        .select('id, first_name, last_name, is_active')
-        .eq('is_active', true)
-        .order('first_name');
-
-      if (error) throw error;
-      setTherapists(data || []);
-    } catch (error) {
-      console.error('Error fetching therapists:', error);
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -331,13 +363,13 @@ export const EnhancedBookingList: React.FC = () => {
     let filtered = [...bookings];
 
     // Status filter
-    if (filters.status) {
+    if (filters.status && filters.status !== 'all') {
       filtered = filtered.filter(booking => booking.status === filters.status);
     }
 
     // Therapist filter
-    if (filters.therapist_id) {
-      filtered = filtered.filter(booking => booking.therapist_profiles?.id === filters.therapist_id);
+    if (filters.therapist_id && filters.therapist_id !== 'all') {
+      filtered = filtered.filter(booking => booking.therapist_id === filters.therapist_id);
     }
 
     // Date range filter
@@ -350,7 +382,7 @@ export const EnhancedBookingList: React.FC = () => {
     }
 
     // Payment status filter
-    if (filters.payment_status) {
+    if (filters.payment_status && filters.payment_status !== 'all') {
       filtered = filtered.filter(booking => booking.payment_status === filters.payment_status);
     }
 
@@ -437,6 +469,15 @@ export const EnhancedBookingList: React.FC = () => {
     return icons[status as keyof typeof icons] || <ClockCircleOutlined />;
   };
 
+  const getPaymentStatusColor = (status: string) => {
+    const colors = {
+      pending: 'orange',
+      paid: 'green',
+      refunded: 'red',
+    };
+    return colors[status as keyof typeof colors] || 'default';
+  };
+
   const statusMenuItems = [
     { key: 'requested', label: 'Mark as Requested', icon: <ClockCircleOutlined /> },
     { key: 'confirmed', label: 'Mark as Confirmed', icon: <CalendarOutlined /> },
@@ -452,161 +493,130 @@ export const EnhancedBookingList: React.FC = () => {
       render: (_, record) => {
         const customerName = record.customers 
           ? `${record.customers.first_name} ${record.customers.last_name}`
-          : record.booker_name || `${record.first_name || ''} ${record.last_name || ''}`.trim() || 'Unknown';
+          : record.booker_name || `${record.first_name || ''} ${record.last_name || ''}`.trim() || 'Unknown Customer';
         
         return (
-          <div>
+          <Space direction="vertical" size="small">
             <Text strong>{customerName}</Text>
-            <br />
-            <Text type="secondary" style={{ fontSize: '12px' }}>
-              {record.customers?.email || record.customer_email || 'No email'}
-            </Text>
-            {(record.customers?.phone || record.customer_phone) && (
-              <div>
-                <PhoneOutlined style={{ marginRight: 4, fontSize: '10px' }} />
-                <Text type="secondary" style={{ fontSize: '10px' }}>
-                  {record.customers?.phone || record.customer_phone}
-                </Text>
-              </div>
-            )}
-          </div>
+            <Space size="small">
+              {(record.customers?.email || record.customer_email) && (
+                <Tooltip title={record.customers?.email || record.customer_email}>
+                  <MailOutlined style={{ color: '#1890ff' }} />
+                </Tooltip>
+              )}
+              {(record.customers?.phone || record.customer_phone) && (
+                <Tooltip title={record.customers?.phone || record.customer_phone}>
+                  <PhoneOutlined style={{ color: '#52c41a' }} />
+                </Tooltip>
+              )}
+            </Space>
+          </Space>
         );
       },
     },
     {
+      title: 'Service',
+      dataIndex: 'service_name',
+      key: 'service_name',
+      render: (_, record) => (
+        <Text>{record.services?.name || 'Unknown Service'}</Text>
+      ),
+    },
+    {
       title: 'Therapist',
-      key: 'therapist',
-      width: 150,
+      dataIndex: 'therapist_name',
+      key: 'therapist_name',
       render: (_, record) => (
-        <div>
-          {record.therapist_profiles ? (
-            <>
-              <Text strong>
-                {record.therapist_profiles.first_name} {record.therapist_profiles.last_name}
-              </Text>
-              <br />
-              <Text type="secondary" style={{ fontSize: '12px' }}>
-                {record.therapist_profiles.email}
-              </Text>
-            </>
-          ) : (
-            <Tag color="orange">Unassigned</Tag>
-          )}
-        </div>
+        <Text>
+          {record.therapist_profiles 
+            ? `${record.therapist_profiles.first_name} ${record.therapist_profiles.last_name}`
+            : 'Unassigned'}
+        </Text>
       ),
     },
     {
-      title: 'Service & Time',
-      key: 'service_time',
-      width: 200,
-      render: (_, record) => (
-        <div>
-          <Text strong>{record.services?.name || 'Unknown Service'}</Text>
-          <br />
-          <Text type="secondary">
-            {dayjs(record.booking_time).format('MMM DD, YYYY')}
-          </Text>
-          <br />
-          <Text type="secondary">
-            <ClockCircleOutlined style={{ marginRight: 4 }} />
-            {dayjs(record.booking_time).format('h:mm A')} 
-            {record.duration_minutes && ` (${record.duration_minutes}min)`}
-          </Text>
-        </div>
-      ),
-    },
-    {
-      title: 'Location',
-      dataIndex: 'address',
-      key: 'address',
-      width: 200,
-      render: (address: string) => (
-        <Tooltip title={address}>
-          <div style={{ maxWidth: 180 }}>
-            <EnvironmentOutlined style={{ marginRight: 4 }} />
-            <Text ellipsis>{address || 'No address'}</Text>
-          </div>
-        </Tooltip>
+      title: 'Date & Time',
+      dataIndex: 'booking_time',
+      key: 'booking_time',
+      render: (time: string) => (
+        <Space direction="vertical" size="small">
+          <Text>{dayjs(time).format('MMM DD, YYYY')}</Text>
+          <Text type="secondary">{dayjs(time).format('HH:mm')}</Text>
+        </Space>
       ),
     },
     {
       title: 'Status',
+      dataIndex: 'status',
       key: 'status',
-      width: 120,
-      render: (_, record) => (
-        <div>
-          <Tag 
-            color={getStatusColor(record.status)} 
-            icon={getStatusIcon(record.status)}
-            style={{ marginBottom: 4 }}
-          >
-            {record.status.charAt(0).toUpperCase() + record.status.slice(1).replace('_', ' ')}
-          </Tag>
-          <br />
-          <Tag 
-            color={record.payment_status === 'paid' ? 'green' : record.payment_status === 'pending' ? 'orange' : 'red'}
-            style={{ fontSize: '10px' }}
-          >
-            {record.payment_status}
-          </Tag>
-        </div>
+      render: (status: string) => (
+        <Tag color={getStatusColor(status)} icon={getStatusIcon(status)}>
+          {status.replace('_', ' ').toUpperCase()}
+        </Tag>
       ),
     },
     {
-      title: 'Price',
-      key: 'price',
-      width: 100,
-      render: (_, record) => (
-        <div>
-          <Text strong>${record.price?.toFixed(2) || 'N/A'}</Text>
-          {canAccess(userRole, 'canViewAllEarnings') && record.therapist_fee && (
-            <>
-              <br />
-              <Text type="secondary" style={{ fontSize: '11px' }}>
-                Fee: ${record.therapist_fee.toFixed(2)}
-              </Text>
-            </>
-          )}
-        </div>
+      title: 'Payment',
+      dataIndex: 'payment_status',
+      key: 'payment_status',
+      render: (status: string) => (
+        <Tag color={getPaymentStatusColor(status)}>
+          {status.toUpperCase()}
+        </Tag>
       ),
     },
+    {
+      // Show "Fees" for therapists, "Price" for admins
+      title: isTherapist(userRole) ? 'Fees' : 'Price',
+      dataIndex: isTherapist(userRole) ? 'therapist_fee' : 'price',
+      key: isTherapist(userRole) ? 'therapist_fee' : 'price',
+      render: (amount: number) => (
+        <Text strong style={{ color: '#52c41a' }}>
+          ${amount?.toFixed(2) || '0.00'}
+        </Text>
+      ),
+    },
+    // Only show "Therapist Fee" column for admins (not therapists)
+    ...(canAccess(userRole, 'canViewAllEarnings') && !isTherapist(userRole) ? [{
+      title: 'Therapist Fee',
+      dataIndex: 'therapist_fee',
+      key: 'therapist_fee',
+      render: (fee: number) => (
+        <Text style={{ color: '#fa541c' }}>
+          {fee ? `$${fee.toFixed(2)}` : '-'}
+        </Text>
+      ),
+    }] : []),
     {
       title: 'Actions',
       key: 'actions',
-      width: 120,
       render: (_, record) => (
-        <Space direction="vertical" size="small">
-          <Space>
+        <Space>
+          <Tooltip title="View Details">
             <Button
-              size="small"
+              type="text"
               icon={<EyeOutlined />}
-              onClick={() => push(`/bookings/show/${record.id}`)}
-              title="View Details"
+              onClick={() => show('bookings', record.id)}
             />
-            {(canAccess(userRole, 'canEditAllBookings') || canAccess(userRole, 'canEditOwnBookings')) && (
-              <Button
-                size="small"
-                type="primary"
-                icon={<EditOutlined />}
-                onClick={() => push(`/bookings/edit/${record.id}`)}
-                title="Edit Booking"
-              />
-            )}
-          </Space>
-          
+          </Tooltip>
+          <Tooltip title="Edit Booking">
+            <Button
+              type="text"
+              icon={<EditOutlined />}
+              onClick={() => edit('bookings', record.id)}
+            />
+          </Tooltip>
           {canAccess(userRole, 'canEditAllBookings') && (
             <Dropdown
               menu={{
                 items: statusMenuItems.map(item => ({
                   ...item,
                   onClick: () => handleStatusChange(record.id, item.key),
+                  disabled: record.status === item.key,
                 })),
               }}
-              trigger={['click']}
             >
-              <Button size="small" style={{ fontSize: '10px' }}>
-                Change Status
-              </Button>
+              <Button type="text" icon={<MoreOutlined />} />
             </Dropdown>
           )}
         </Space>
@@ -614,56 +624,40 @@ export const EnhancedBookingList: React.FC = () => {
     },
   ];
 
-  const rowSelection = canAccess(userRole, 'canEditAllBookings') ? {
+  const rowSelection = {
     selectedRowKeys,
-    onChange: setSelectedRowKeys,
-  } : undefined;
-
-  // Calculate summary stats
-  const summaryStats = {
-    total: filteredBookings.length,
-    completed: filteredBookings.filter(b => b.status === 'completed').length,
-    confirmed: filteredBookings.filter(b => b.status === 'confirmed').length,
-    pending: filteredBookings.filter(b => b.status === 'requested').length,
-    totalRevenue: filteredBookings
-      .filter(b => b.status === 'completed')
-      .reduce((sum, b) => sum + (b.price || 0), 0),
+    onChange: (newSelectedRowKeys: React.Key[]) => {
+      setSelectedRowKeys(newSelectedRowKeys);
+    },
   };
 
   return (
-    <RoleGuard requiredPermission="canViewBookingCalendar">
+    <RoleGuard requiredPermission="canViewAllBookings">
       <div style={{ padding: 24 }}>
-        <Row justify="space-between" align="middle" style={{ marginBottom: 24 }}>
-          <Col>
-            <Title level={2} style={{ margin: 0 }}>
-              Booking Management
-            </Title>
-            <Text type="secondary">
-              Manage and track all massage bookings
-            </Text>
+        {/* Header */}
+        <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
+          <Col span={12}>
+            <Title level={3}>Bookings</Title>
           </Col>
-          <Col>
+          <Col span={12} style={{ textAlign: 'right' }}>
             <Space>
               <Button 
-                icon={<CalendarOutlined />}
-                onClick={() => push('/bookings/calendar')}
-              >
-                Calendar View
-              </Button>
-              <Button 
                 icon={<ReloadOutlined />} 
-                onClick={fetchData}
+                onClick={fetchBookings}
                 loading={loading}
               >
                 Refresh
               </Button>
-              <Button
-                type="primary"
-                icon={<PlusOutlined />}
-                onClick={() => window.open('https://rmmbookingplatform.netlify.app', '_blank')}
-              >
-                Create New Booking
-              </Button>
+              {canAccess(userRole, 'canCreateBookings') && (
+                <Button
+                  type="primary"
+                  icon={<PlusOutlined />}
+                  href="https://your-booking-platform-url.com"
+                  target="_blank"
+                >
+                  New Booking
+                </Button>
+              )}
             </Space>
           </Col>
         </Row>
@@ -703,8 +697,8 @@ export const EnhancedBookingList: React.FC = () => {
           <Col span={6}>
             <Card>
               <Statistic
-                title="Revenue"
-                value={summaryStats.totalRevenue}
+                title={isTherapist(userRole) ? "Total Fees" : "Revenue"}
+                value={isTherapist(userRole) ? summaryStats.totalFees : summaryStats.totalRevenue}
                 prefix={<DollarOutlined />}
                 precision={2}
                 valueStyle={{ color: '#52c41a' }}
@@ -714,14 +708,14 @@ export const EnhancedBookingList: React.FC = () => {
         </Row>
 
         {/* Filters */}
-        <Card style={{ marginBottom: 24 }}>
-          <Row gutter={16} align="middle">
+        <Card style={{ marginBottom: 16 }}>
+          <Row gutter={[16, 16]} align="middle">
             <Col span={6}>
               <Input
-                placeholder="Search customers, therapists, services..."
-                prefix={<SearchOutlined />}
+                placeholder="Search bookings..."
                 value={filters.search}
-                onChange={(e) => setFilters({ ...filters, search: e.target.value })}
+                onChange={(e) => setFilters(prev => ({ ...prev, search: e.target.value }))}
+                onSearch={() => applyFilters()}
                 allowClear
               />
             </Col>
@@ -729,10 +723,11 @@ export const EnhancedBookingList: React.FC = () => {
               <Select
                 placeholder="Status"
                 value={filters.status}
-                onChange={(value) => setFilters({ ...filters, status: value })}
-                allowClear
+                onChange={(value) => setFilters(prev => ({ ...prev, status: value }))}
                 style={{ width: '100%' }}
+                allowClear
               >
+                <Option value="all">All Status</Option>
                 <Option value="requested">Requested</Option>
                 <Option value="confirmed">Confirmed</Option>
                 <Option value="completed">Completed</Option>
@@ -742,27 +737,25 @@ export const EnhancedBookingList: React.FC = () => {
             </Col>
             <Col span={4}>
               <Select
-                placeholder="Therapist"
-                value={filters.therapist_id}
-                onChange={(value) => setFilters({ ...filters, therapist_id: value })}
-                allowClear
+                placeholder="Payment Status"
+                value={filters.payment_status}
+                onChange={(value) => setFilters(prev => ({ ...prev, payment_status: value }))}
                 style={{ width: '100%' }}
+                allowClear
               >
-                {therapists.map(therapist => (
-                  <Option key={therapist.id} value={therapist.id}>
-                    {therapist.first_name} {therapist.last_name}
-                  </Option>
-                ))}
+                <Option value="all">All Payment</Option>
+                <Option value="pending">Pending</Option>
+                <Option value="paid">Paid</Option>
+                <Option value="refunded">Refunded</Option>
               </Select>
             </Col>
             <Col span={6}>
               <RangePicker
-                value={filters.date_range}
-                onChange={(dates) => setFilters({ 
-                  ...filters, 
-                  date_range: dates ? [dates[0]!, dates[1]!] : undefined 
-                })}
                 style={{ width: '100%' }}
+                onChange={(dates) => setFilters(prev => ({ 
+                  ...prev, 
+                  date_range: dates ? [dates[0]!, dates[1]!] : undefined 
+                }))}
               />
             </Col>
             <Col span={4}>
@@ -812,7 +805,7 @@ export const EnhancedBookingList: React.FC = () => {
             dataSource={filteredBookings}
             rowKey="id"
             loading={loading}
-            rowSelection={rowSelection}
+            rowSelection={canAccess(userRole, 'canEditAllBookings') ? rowSelection : undefined}
             pagination={{
               pageSize: 20,
               showSizeChanger: true,
