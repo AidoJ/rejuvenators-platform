@@ -400,13 +400,13 @@ export const EnhancedBookingList: React.FC = () => {
         
         return (
           customerName.toLowerCase().includes(searchLower) ||
-          booking.customer_email?.toLowerCase().includes(searchLower) ||
-          booking.customer_phone?.includes(filters.search) ||
+          (booking.customer_email || '').toLowerCase().includes(searchLower) ||
+          (booking.customer_phone || '').includes(filters.search) ||
           booking.id.toLowerCase().includes(searchLower) ||
-          booking.therapist_profiles?.first_name?.toLowerCase().includes(searchLower) ||
-          booking.therapist_profiles?.last_name?.toLowerCase().includes(searchLower) ||
-          booking.services?.name?.toLowerCase().includes(searchLower) ||
-          booking.address?.toLowerCase().includes(searchLower)
+          (booking.therapist_profiles?.first_name || '').toLowerCase().includes(searchLower) ||
+          (booking.therapist_profiles?.last_name || '').toLowerCase().includes(searchLower) ||
+          (booking.services?.name || '').toLowerCase().includes(searchLower) ||
+          (booking.address || '').toLowerCase().includes(searchLower)
         );
       });
     }
