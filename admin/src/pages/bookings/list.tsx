@@ -40,7 +40,7 @@ import dayjs, { Dayjs } from 'dayjs';
 
 // Import role utilities and components
 import { UserIdentity, canAccess, isTherapist, isAdmin } from '../../utils/roleUtils';
-import RoleGuard from '../../components/RoleGuard';
+import { RoleGuard } from '../../components/RoleGuard';
 
 const { Title, Text } = Typography;
 const { Search } = Input;
@@ -372,7 +372,7 @@ export const EnhancedBookingList = () => {
     {
       title: 'Customer',
       key: 'customer',
-      render: (_, record: BookingRecord) => {
+      render: (_: any, record: BookingRecord) => {
         const customerName = record.customers 
           ? `${record.customers.first_name} ${record.customers.last_name}`
           : record.booker_name || `${record.first_name || ''} ${record.last_name || ''}`.trim() || 'Unknown Customer';
@@ -400,7 +400,7 @@ export const EnhancedBookingList = () => {
       title: 'Service',
       dataIndex: 'service_name',
       key: 'service_name',
-      render: (_, record: BookingRecord) => (
+      render: (_: any, record: BookingRecord) => (
         <Text>{record.services?.name || 'Unknown Service'}</Text>
       ),
     },
@@ -408,7 +408,7 @@ export const EnhancedBookingList = () => {
       title: 'Therapist',
       dataIndex: 'therapist_name',
       key: 'therapist_name',
-      render: (_, record: BookingRecord) => (
+      render: (_: any, record: BookingRecord) => (
         <Text>
           {record.therapist_profiles 
             ? `${record.therapist_profiles.first_name} ${record.therapist_profiles.last_name}`
@@ -472,7 +472,7 @@ export const EnhancedBookingList = () => {
     {
       title: 'Actions',
       key: 'actions',
-      render: (_, record: BookingRecord) => (
+      render: (_: any, record: BookingRecord) => (
         <Space>
           <Tooltip title="View Details">
             <Button
