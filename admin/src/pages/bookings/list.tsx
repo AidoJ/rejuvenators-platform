@@ -1,77 +1,92 @@
 import React, { useState, useEffect } from 'react';
 import {
-  Card,
   Table,
+  Card,
   Space,
   Button,
-  Input,
-  Select,
-  DatePicker,
   Tag,
-  Dropdown,
-  Modal,
-  message,
   Typography,
   Row,
   Col,
-  Statistic,
-  Badge,
+  Input,
+  Select,
+  DatePicker,
   Tooltip,
-  Popconfirm,
+  Dropdown,
+  message,
+  Modal,
+  Statistic,
+  Spin
 } from 'antd';
 import {
-  SearchOutlined,
-  FilterOutlined,
-  ExportOutlined,
-  EditOutlined,
   EyeOutlined,
-  UserOutlined,
-  CalendarOutlined,
-  DollarOutlined,
-  PhoneOutlined,
-  EnvironmentOutlined,
-  ClockCircleOutlined,
-  CheckCircleOutlined,
-  ExclamationCircleOutlined,
+  EditOutlined,
+  DeleteOutlined,
   PlusOutlined,
   ReloadOutlined,
-  MailOutlined,
   MoreOutlined,
+  ExportOutlined,
+  CalendarOutlined,
+  DollarOutlined,
+  CheckCircleOutlined,
+  MailOutlined,
+  PhoneOutlined,
+  ClockCircleOutlined,
+  ExclamationCircleOutlined
 } from '@ant-design/icons';
 import { useGetIdentity, useNavigation } from '@refinedev/core';
 import { supabaseClient } from '../../utility';
-import { UserIdentity, canAccess, isTherapist } from '../../utils/roleUtils';
-import { RoleGuard } from '../../components/RoleGuard';
-import dayjs from 'dayjs';
-import type { TableColumnsType } from 'antd';
+import dayjs, { Dayjs } from 'dayjs';
+
+// Import role utilities and components
+import { UserIdentity, canAccess, isTherapist, isAdmin } from '../../utils/roleUtils';
+import RoleGuard from '../../components/RoleGuard';
 
 const { Title, Text } = Typography;
+const { Search } = Input;
 const { RangePicker } = DatePicker;
 const { Option } = Select;
-const { Search } = Input;
+const { confirm } = Modal;
 
-// Interfaces
+interface BookingSummaryStats {
+  total: number;
+  completed: number;
+  confirmed: number;
+  pending: number;
+  cancelled: number;
+  totalRevenue: number;
+  totalFees: number;
+}
+
+interface BookingFilters {
+  search: string;
+  status: string;
+  payment_status: string;
+  therapist_id: string;
+  service_id: string;
+  date_range: [Dayjs, Dayjs] | null;
+}
+
 interface BookingRecord {
   id: string;
+  booking_id?: string;
+  customer_id?: string;
+  therapist_id?: string;
+  service_id?: string;
   booking_time: string;
   status: string;
   payment_status: string;
   price: number;
-  therapist_fee?: number;
-  therapist_id?: string;
-  customer_id?: string;
-  service_id?: string;
-  address: string;
+  therapist_fee: number;
+  address?: string;
   notes?: string;
-  duration_minutes?: number;
-  customer_email?: string;
-  customer_phone?: string;
-  booker_name?: string;
+  created_at: string;
+  updated_at: string;
   first_name?: string;
   last_name?: string;
-  business_name?: string;
-  room_number?: string;
-  created_at: string;
+  booker_name?: string;
+  customer_email?: string;
+  customer_phone?: string;
   customers?: {
     id: string;
     first_name: string;
@@ -90,183 +105,66 @@ interface BookingRecord {
     id: string;
     name: string;
     description?: string;
+    service_base_price: number;
   };
 }
 
-interface FilterState {
-  status?: string;
-  therapist_id?: string;
-  date_range?: [dayjs.Dayjs, dayjs.Dayjs];
-  search?: string;
-  payment_status?: string;
-}
-
-interface BookingSummary {
-  total: number;
-  completed: number;
-  confirmed: number;
-  pending: number;
-  cancelled: number;
-  totalRevenue: number;
-  totalFees: number;
-}
-
-interface Therapist {
-  id: string;
-  first_name: string;
-  last_name: string;
-  is_active: boolean;
-}
-
-export const EnhancedBookingList: React.FC = () => {
+export const EnhancedBookingList = () => {
   const { data: identity } = useGetIdentity<UserIdentity>();
-  const { edit, show, push } = useNavigation();
+  const { show, edit, create } = useNavigation();
   
   const [bookings, setBookings] = useState<BookingRecord[]>([]);
-  const [filteredBookings, setFilteredBookings] = useState<BookingRecord[]>([]);
-  const [therapists, setTherapists] = useState<Therapist[]>([]);
   const [loading, setLoading] = useState(true);
-  const [selectedRowKeys, setSelectedRowKeys] = useState<React.Key[]>([]);
-  const [filters, setFilters] = useState<FilterState>({});
-  const [summaryStats, setSummaryStats] = useState<BookingSummary>({
+  const [summaryStats, setSummaryStats] = useState<BookingSummaryStats>({
     total: 0,
     completed: 0,
     confirmed: 0,
     pending: 0,
     cancelled: 0,
     totalRevenue: 0,
-    totalFees: 0,
+    totalFees: 0
   });
   
+  const [filters, setFilters] = useState<BookingFilters>({
+    search: '',
+    status: '',
+    payment_status: '',
+    therapist_id: '',
+    service_id: '',
+    date_range: null
+  });
+  
+  const [selectedRowKeys, setSelectedRowKeys] = useState<React.Key[]>([]);
+  const [pagination, setPagination] = useState({
+    current: 1,
+    pageSize: 20,
+    total: 0
+  });
+
   const userRole = identity?.role;
-
-  // Debug function to check database connection and tables
-  const debugDatabase = async () => {
-    console.log('=== DATABASE DEBUG ===');
-    
-    try {
-      // Check if we can connect to bookings table
-      const { count: bookingsCount, error: bookingsError } = await supabaseClient
-        .from('bookings')
-        .select('*', { count: 'exact', head: true });
-      
-      if (bookingsError) {
-        console.error('Bookings table error:', bookingsError);
-      } else {
-        console.log('Bookings table accessible, count:', bookingsCount);
-      }
-
-      // Check customers table
-      const { count: customersCount, error: customersError } = await supabaseClient
-        .from('customers')
-        .select('*', { count: 'exact', head: true });
-      
-      if (customersError) {
-        console.error('Customers table error:', customersError);
-      } else {
-        console.log('Customers table accessible, count:', customersCount);
-      }
-
-      // Check therapist_profiles table
-      const { count: therapistsCount, error: therapistsError } = await supabaseClient
-        .from('therapist_profiles')
-        .select('*', { count: 'exact', head: true });
-      
-      if (therapistsError) {
-        console.error('Therapist profiles table error:', therapistsError);
-      } else {
-        console.log('Therapist profiles table accessible, count:', therapistsCount);
-      }
-
-      // Check services table
-      const { count: servicesCount, error: servicesError } = await supabaseClient
-        .from('services')
-        .select('*', { count: 'exact', head: true });
-      
-      if (servicesError) {
-        console.error('Services table error:', servicesError);
-      } else {
-        console.log('Services table accessible, count:', servicesCount);
-      }
-
-    } catch (error) {
-      console.error('Database connection error:', error);
-    }
-  };
 
   useEffect(() => {
     if (identity) {
-      debugDatabase();
       fetchBookings();
-      fetchTherapists();
     }
-  }, [identity]);
-
-  useEffect(() => {
-    applyFilters();
-  }, [bookings, filters]);
-
-  // Calculate summary statistics whenever filtered bookings change
-  useEffect(() => {
-    if (filteredBookings.length > 0) {
-      const completed = filteredBookings.filter(item => item.status === 'completed');
-      const confirmed = filteredBookings.filter(item => item.status === 'confirmed');
-      const pending = filteredBookings.filter(item => item.status === 'requested');
-      const cancelled = filteredBookings.filter(item => item.status === 'cancelled');
-      
-      const totalRevenue = completed.reduce((sum, item) => sum + (parseFloat(item.price?.toString() || '0') || 0), 0);
-      const totalFees = completed.reduce((sum, item) => sum + (parseFloat(item.therapist_fee?.toString() || '0') || 0), 0);
-
-      setSummaryStats({
-        total: filteredBookings.length,
-        completed: completed.length,
-        confirmed: confirmed.length,
-        pending: pending.length,
-        cancelled: cancelled.length,
-        totalRevenue,
-        totalFees,
-      });
-    } else {
-      setSummaryStats({
-        total: 0,
-        completed: 0,
-        confirmed: 0,
-        pending: 0,
-        cancelled: 0,
-        totalRevenue: 0,
-        totalFees: 0,
-      });
-    }
-  }, [filteredBookings]);
-
-  const fetchTherapists = async () => {
-    try {
-      const { data, error } = await supabaseClient
-        .from('therapist_profiles')
-        .select('id, first_name, last_name, is_active')
-        .eq('is_active', true)
-        .order('first_name');
-
-      if (error) throw error;
-      setTherapists(data || []);
-    } catch (error) {
-      console.error('Error fetching therapists:', error);
-      message.error('Failed to load therapist data');
-    }
-  };
+  }, [identity, filters, pagination.current, pagination.pageSize]);
 
   const fetchBookings = async () => {
     try {
-      console.log('Fetching bookings...');
+      setLoading(true);
       
-      // First, let's just get basic bookings data
+      // Build query with joins
       let query = supabaseClient
         .from('bookings')
-        .select('*')
-        .order('booking_time', { ascending: false });
+        .select(`
+          *,
+          customers(id, first_name, last_name, email, phone),
+          therapist_profiles(id, first_name, last_name, email, phone),
+          services(id, name, description, service_base_price)
+        `, { count: 'exact' });
 
-      // If therapist, only show their bookings
-      if (userRole === 'therapist' && identity?.id) {
+      // Role-based filtering: if therapist, only show their bookings
+      if (isTherapist(userRole) && identity?.id) {
         const { data: therapistProfile } = await supabaseClient
           .from('therapist_profiles')
           .select('id')
@@ -278,223 +176,203 @@ export const EnhancedBookingList: React.FC = () => {
         }
       }
 
-      const { data: bookingsData, error: bookingsError } = await query;
-      
-      if (bookingsError) {
-        console.error('Error fetching bookings:', bookingsError);
-        throw bookingsError;
+      // Apply filters
+      if (filters.search) {
+        // Search across multiple fields - note: this is simplified, you might want to use full-text search
+        query = query.or(`first_name.ilike.%${filters.search}%,last_name.ilike.%${filters.search}%,booker_name.ilike.%${filters.search}%,customer_email.ilike.%${filters.search}%,address.ilike.%${filters.search}%`);
       }
 
-      console.log('Raw bookings data:', bookingsData);
-
-      if (!bookingsData || bookingsData.length === 0) {
-        console.log('No bookings found');
-        setBookings([]);
-        return;
+      if (filters.status && filters.status !== 'all') {
+        query = query.eq('status', filters.status);
       }
 
-      // Now let's enrich the data with related information
-      const enrichedBookings = await Promise.all(
-        bookingsData.map(async (booking) => {
-          let enrichedBooking = { ...booking };
+      if (filters.payment_status && filters.payment_status !== 'all') {
+        query = query.eq('payment_status', filters.payment_status);
+      }
 
-          // Get customer data
-          if (booking.customer_id) {
-            try {
-              const { data: customer } = await supabaseClient
-                .from('customers')
-                .select('id, first_name, last_name, email, phone')
-                .eq('id', booking.customer_id)
-                .single();
-              
-              if (customer) {
-                enrichedBooking.customers = customer;
-              }
-            } catch (customerError) {
-              console.log('Customer not found for booking:', booking.id);
-            }
-          }
+      if (filters.therapist_id) {
+        query = query.eq('therapist_id', filters.therapist_id);
+      }
 
-          // Get therapist data
-          if (booking.therapist_id) {
-            try {
-              const { data: therapist } = await supabaseClient
-                .from('therapist_profiles')
-                .select('id, first_name, last_name, email, phone')
-                .eq('id', booking.therapist_id)
-                .single();
-              
-              if (therapist) {
-                enrichedBooking.therapist_profiles = therapist;
-              }
-            } catch (therapistError) {
-              console.log('Therapist not found for booking:', booking.id);
-            }
-          }
+      if (filters.service_id) {
+        query = query.eq('service_id', filters.service_id);
+      }
 
-          // Get service data
-          if (booking.service_id) {
-            try {
-              const { data: service } = await supabaseClient
-                .from('services')
-                .select('id, name, description')
-                .eq('id', booking.service_id)
-                .single();
-              
-              if (service) {
-                enrichedBooking.services = service;
-              }
-            } catch (serviceError) {
-              console.log('Service not found for booking:', booking.id);
-            }
-          }
+      if (filters.date_range) {
+        query = query
+          .gte('booking_time', filters.date_range[0].startOf('day').toISOString())
+          .lte('booking_time', filters.date_range[1].endOf('day').toISOString());
+      }
 
-          return enrichedBooking;
-        })
-      );
+      // Apply pagination and ordering
+      const { data, error, count } = await query
+        .order('booking_time', { ascending: false })
+        .range(
+          (pagination.current - 1) * pagination.pageSize,
+          pagination.current * pagination.pageSize - 1
+        );
 
-      console.log('Enriched bookings:', enrichedBookings);
-      setBookings(enrichedBookings);
+      if (error) throw error;
+
+      setBookings(data || []);
+      setPagination(prev => ({ ...prev, total: count || 0 }));
+
+      // Calculate summary statistics
+      calculateSummaryStats(data || []);
+
     } catch (error) {
       console.error('Error fetching bookings:', error);
-      message.error(`Failed to load bookings: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      message.error('Failed to load bookings');
     } finally {
       setLoading(false);
     }
   };
 
-  const applyFilters = () => {
-    let filtered = [...bookings];
-
-    // Status filter
-    if (filters.status && filters.status !== 'all') {
-      filtered = filtered.filter(booking => booking.status === filters.status);
-    }
-
-    // Therapist filter
-    if (filters.therapist_id && filters.therapist_id !== 'all') {
-      filtered = filtered.filter(booking => booking.therapist_id === filters.therapist_id);
-    }
-
-    // Date range filter
-    if (filters.date_range) {
-      const [start, end] = filters.date_range;
-      filtered = filtered.filter(booking => {
-        const bookingDate = dayjs(booking.booking_time);
-        return bookingDate.isAfter(start.startOf('day')) && bookingDate.isBefore(end.endOf('day'));
-      });
-    }
-
-    // Payment status filter
-    if (filters.payment_status && filters.payment_status !== 'all') {
-      filtered = filtered.filter(booking => booking.payment_status === filters.payment_status);
-    }
-
-    // Search filter
-    if (filters.search) {
-      const searchLower = filters.search.toLowerCase();
-      filtered = filtered.filter(booking => {
-        const customerName = booking.customers 
-          ? `${booking.customers.first_name} ${booking.customers.last_name}`
-          : booking.booker_name || `${booking.first_name || ''} ${booking.last_name || ''}`.trim();
+  const calculateSummaryStats = (data: BookingRecord[]) => {
+    const stats = data.reduce(
+      (acc, booking) => {
+        acc.total++;
         
-        return (
-          customerName.toLowerCase().includes(searchLower) ||
-          (booking.customer_email || '').toLowerCase().includes(searchLower) ||
-          (booking.customer_phone || '').includes(filters.search) ||
-          booking.id.toLowerCase().includes(searchLower) ||
-          (booking.therapist_profiles?.first_name || '').toLowerCase().includes(searchLower) ||
-          (booking.therapist_profiles?.last_name || '').toLowerCase().includes(searchLower) ||
-          (booking.services?.name || '').toLowerCase().includes(searchLower) ||
-          (booking.address || '').toLowerCase().includes(searchLower)
-        );
-      });
-    }
+        switch (booking.status) {
+          case 'completed':
+            acc.completed++;
+            break;
+          case 'confirmed':
+            acc.confirmed++;
+            break;
+          case 'requested':
+            acc.pending++;
+            break;
+          case 'cancelled':
+          case 'declined':
+            acc.cancelled++;
+            break;
+        }
 
-    setFilteredBookings(filtered);
+        // Only count revenue/fees from completed bookings
+        if (booking.status === 'completed') {
+          acc.totalRevenue += parseFloat(booking.price?.toString() || '0') || 0;
+          acc.totalFees += parseFloat(booking.therapist_fee?.toString() || '0') || 0;
+        }
+
+        return acc;
+      },
+      {
+        total: 0,
+        completed: 0,
+        confirmed: 0,
+        pending: 0,
+        cancelled: 0,
+        totalRevenue: 0,
+        totalFees: 0
+      }
+    );
+
+    setSummaryStats(stats);
+  };
+
+  const applyFilters = () => {
+    setPagination(prev => ({ ...prev, current: 1 }));
+    fetchBookings();
   };
 
   const handleStatusChange = async (bookingId: string, newStatus: string) => {
     try {
       const { error } = await supabaseClient
         .from('bookings')
-        .update({ status: newStatus })
+        .update({ status: newStatus, updated_at: new Date().toISOString() })
         .eq('id', bookingId);
 
       if (error) throw error;
 
       message.success(`Booking status updated to ${newStatus}`);
-      fetchBookings(); // Refresh data
+      fetchBookings();
     } catch (error) {
-      console.error('Error updating status:', error);
+      console.error('Error updating booking status:', error);
       message.error('Failed to update booking status');
     }
   };
 
-  const handleBulkStatusChange = async (newStatus: string) => {
-    try {
-      const { error } = await supabaseClient
-        .from('bookings')
-        .update({ status: newStatus })
-        .in('id', selectedRowKeys);
+  const handleBulkDelete = () => {
+    if (selectedRowKeys.length === 0) {
+      message.warning('Please select bookings to delete');
+      return;
+    }
 
-      if (error) throw error;
+    confirm({
+      title: 'Delete Selected Bookings',
+      content: `Are you sure you want to delete ${selectedRowKeys.length} booking(s)? This action cannot be undone.`,
+      okText: 'Yes, Delete',
+      okType: 'danger',
+      cancelText: 'Cancel',
+      onOk: async () => {
+        try {
+          const { error } = await supabaseClient
+            .from('bookings')
+            .delete()
+            .in('id', selectedRowKeys);
 
-      message.success(`Updated ${selectedRowKeys.length} bookings to ${newStatus}`);
-      setSelectedRowKeys([]);
-      fetchBookings();
-    } catch (error) {
-      console.error('Error updating bookings:', error);
-      message.error('Failed to update bookings');
+          if (error) throw error;
+
+          message.success(`${selectedRowKeys.length} booking(s) deleted successfully`);
+          setSelectedRowKeys([]);
+          fetchBookings();
+        } catch (error) {
+          console.error('Error deleting bookings:', error);
+          message.error('Failed to delete bookings');
+        }
+      }
+    });
+  };
+
+  // Status color helper
+  const getStatusColor = (status: string) => {
+    switch (status) {
+      case 'completed': return 'green';
+      case 'confirmed': return 'blue';
+      case 'requested': return 'orange';
+      case 'cancelled': return 'red';
+      case 'declined': return 'red';
+      case 'timeout_reassigned': return 'purple';
+      case 'seeking_alternate': return 'orange';
+      default: return 'default';
     }
   };
 
-  const getStatusColor = (status: string) => {
-    const colors = {
-      requested: 'orange',
-      confirmed: 'blue',
-      completed: 'green',
-      cancelled: 'red',
-      declined: 'red',
-      timeout_reassigned: 'purple',
-      seeking_alternate: 'yellow',
-    };
-    return colors[status as keyof typeof colors] || 'default';
-  };
-
+  // Status icon helper
   const getStatusIcon = (status: string) => {
-    const icons = {
-      requested: <ClockCircleOutlined />,
-      confirmed: <CalendarOutlined />,
-      completed: <CheckCircleOutlined />,
-      cancelled: <ExclamationCircleOutlined />,
-      declined: <ExclamationCircleOutlined />,
-    };
-    return icons[status as keyof typeof icons] || <ClockCircleOutlined />;
+    switch (status) {
+      case 'completed': return <CheckCircleOutlined />;
+      case 'confirmed': return <CalendarOutlined />;
+      case 'requested': return <ClockCircleOutlined />;
+      default: return <ExclamationCircleOutlined />;
+    }
   };
 
+  // Payment status color helper
   const getPaymentStatusColor = (status: string) => {
-    const colors = {
-      pending: 'orange',
-      paid: 'green',
-      refunded: 'red',
-    };
-    return colors[status as keyof typeof colors] || 'default';
+    switch (status) {
+      case 'paid': return 'green';
+      case 'pending': return 'orange';
+      case 'refunded': return 'red';
+      default: return 'default';
+    }
   };
 
+  // Status change menu items
   const statusMenuItems = [
-    { key: 'requested', label: 'Mark as Requested', icon: <ClockCircleOutlined /> },
-    { key: 'confirmed', label: 'Mark as Confirmed', icon: <CalendarOutlined /> },
-    { key: 'completed', label: 'Mark as Completed', icon: <CheckCircleOutlined /> },
-    { key: 'cancelled', label: 'Mark as Cancelled', icon: <ExclamationCircleOutlined /> },
+    { key: 'confirmed', label: 'Confirm', icon: <CheckCircleOutlined /> },
+    { key: 'completed', label: 'Complete', icon: <CheckCircleOutlined /> },
+    { key: 'cancelled', label: 'Cancel', icon: <ExclamationCircleOutlined /> },
+    { key: 'declined', label: 'Decline', icon: <ExclamationCircleOutlined /> }
   ];
 
-  const columns: TableColumnsType<BookingRecord> = [
+  // Table columns with role-based differences
+  const columns = [
     {
       title: 'Customer',
       key: 'customer',
-      width: 200,
-      render: (_, record) => {
+      render: (_, record: BookingRecord) => {
         const customerName = record.customers 
           ? `${record.customers.first_name} ${record.customers.last_name}`
           : record.booker_name || `${record.first_name || ''} ${record.last_name || ''}`.trim() || 'Unknown Customer';
@@ -522,7 +400,7 @@ export const EnhancedBookingList: React.FC = () => {
       title: 'Service',
       dataIndex: 'service_name',
       key: 'service_name',
-      render: (_, record) => (
+      render: (_, record: BookingRecord) => (
         <Text>{record.services?.name || 'Unknown Service'}</Text>
       ),
     },
@@ -530,7 +408,7 @@ export const EnhancedBookingList: React.FC = () => {
       title: 'Therapist',
       dataIndex: 'therapist_name',
       key: 'therapist_name',
-      render: (_, record) => (
+      render: (_, record: BookingRecord) => (
         <Text>
           {record.therapist_profiles 
             ? `${record.therapist_profiles.first_name} ${record.therapist_profiles.last_name}`
@@ -569,7 +447,7 @@ export const EnhancedBookingList: React.FC = () => {
         </Tag>
       ),
     },
-    // ONLY change column title/data for therapists, keep admin view unchanged
+    // ROLE-BASED COLUMN: Show "Fees" for therapists, "Price" for admins
     {
       title: isTherapist(userRole) ? 'Fees' : 'Price',
       dataIndex: isTherapist(userRole) ? 'therapist_fee' : 'price',
@@ -580,7 +458,7 @@ export const EnhancedBookingList: React.FC = () => {
         </Text>
       ),
     },
-    // Only show "Therapist Fee" column for admins (not therapists) - UNCHANGED from original
+    // ADMIN-ONLY COLUMN: Show separate "Therapist Fee" column for admins (not therapists)
     ...(canAccess(userRole, 'canViewAllEarnings') && !isTherapist(userRole) ? [{
       title: 'Therapist Fee',
       dataIndex: 'therapist_fee',
@@ -594,7 +472,7 @@ export const EnhancedBookingList: React.FC = () => {
     {
       title: 'Actions',
       key: 'actions',
-      render: (_, record) => (
+      render: (_, record: BookingRecord) => (
         <Space>
           <Tooltip title="View Details">
             <Button
@@ -666,7 +544,7 @@ export const EnhancedBookingList: React.FC = () => {
           </Col>
         </Row>
 
-        {/* Summary Statistics - ONLY change for therapists */}
+        {/* Summary Statistics - ROLE-BASED */}
         <Row gutter={16} style={{ marginBottom: 24 }}>
           <Col span={6}>
             <Card>
@@ -758,67 +636,72 @@ export const EnhancedBookingList: React.FC = () => {
                 style={{ width: '100%' }}
                 onChange={(dates) => setFilters(prev => ({ 
                   ...prev, 
-                  date_range: dates ? [dates[0]!, dates[1]!] : undefined 
+                  date_range: dates ? [dates[0]!, dates[1]!] : null 
                 }))}
               />
             </Col>
             <Col span={4}>
-              <Button
-                onClick={() => setFilters({})}
-                style={{ width: '100%' }}
-              >
-                Clear Filters
-              </Button>
+              <Space>
+                <Button onClick={applyFilters} type="primary">
+                  Apply Filters
+                </Button>
+                <Button onClick={() => {
+                  setFilters({
+                    search: '',
+                    status: '',
+                    payment_status: '',
+                    therapist_id: '',
+                    service_id: '',
+                    date_range: null
+                  });
+                  setPagination(prev => ({ ...prev, current: 1 }));
+                }}>
+                  Clear
+                </Button>
+              </Space>
             </Col>
           </Row>
-
-          {/* Bulk Actions */}
-          {selectedRowKeys.length > 0 && canAccess(userRole, 'canEditAllBookings') && (
-            <Row style={{ marginTop: 16, padding: '12px', backgroundColor: '#f0f9ff', borderRadius: '6px' }}>
-              <Col span={24}>
-                <Space>
-                  <Text strong>{selectedRowKeys.length} bookings selected</Text>
-                  <Dropdown
-                    menu={{
-                      items: statusMenuItems.map(item => ({
-                        ...item,
-                        onClick: () => handleBulkStatusChange(item.key),
-                      })),
-                    }}
-                  >
-                    <Button type="primary" size="small">
-                      Bulk Status Change
-                    </Button>
-                  </Dropdown>
-                  <Button 
-                    size="small" 
-                    onClick={() => setSelectedRowKeys([])}
-                  >
-                    Clear Selection
-                  </Button>
-                </Space>
-              </Col>
-            </Row>
-          )}
         </Card>
+
+        {/* Bulk Actions */}
+        {selectedRowKeys.length > 0 && canAccess(userRole, 'canEditAllBookings') && (
+          <Card style={{ marginBottom: 16 }}>
+            <Space>
+              <Text>Selected {selectedRowKeys.length} booking(s)</Text>
+              <Button 
+                danger 
+                icon={<DeleteOutlined />}
+                onClick={handleBulkDelete}
+              >
+                Delete Selected
+              </Button>
+            </Space>
+          </Card>
+        )}
 
         {/* Bookings Table */}
         <Card>
-          <Table<BookingRecord>
-            columns={columns}
-            dataSource={filteredBookings}
+          <Table
             rowKey="id"
+            columns={columns}
+            dataSource={bookings}
             loading={loading}
-            rowSelection={canAccess(userRole, 'canEditAllBookings') ? rowSelection : undefined}
             pagination={{
-              pageSize: 20,
+              ...pagination,
               showSizeChanger: true,
               showQuickJumper: true,
               showTotal: (total, range) => 
                 `${range[0]}-${range[1]} of ${total} bookings`,
+              onChange: (page, pageSize) => {
+                setPagination(prev => ({ 
+                  ...prev, 
+                  current: page, 
+                  pageSize: pageSize || 20 
+                }));
+              }
             }}
+            rowSelection={rowSelection}
             scroll={{ x: 1200 }}
-            size="small"
           />
         </Card>
       </div>
