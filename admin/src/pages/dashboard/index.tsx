@@ -46,6 +46,7 @@ interface BookingStats {
   pendingBookings: number;
   cancelledBookings: number;
   averageBookingValue: number;
+  averageFeeValue: number;
   conversionRate: number;
 }
 
@@ -65,31 +66,29 @@ interface DateRange {
   end: Dayjs;
 }
 
-// Preset date range options
-const DATE_PRESETS = {
-  today: { label: 'Today', days: 0 },
-  week: { label: 'Last 7 Days', days: 7 },
-  month: { label: 'Last 30 Days', days: 30 },
-  quarter: { label: 'Last 90 Days', days: 90 },
-  year: { label: 'Last 365 Days', days: 365 },
+// Date range presets
+const datePresets = {
+  today: { label: 'Today', type: 'day' },
+  week: { label: 'Last 7 Days', type: 'week' },
+  month: { label: 'Last 30 Days', type: 'month' },
+  quarter: { label: 'Last 90 Days', type: 'quarter' },
+  year: { label: 'Last 365 Days', type: 'year' },
   currentWeek: { label: 'This Week', type: 'week' },
   currentMonth: { label: 'This Month', type: 'month' },
   currentQuarter: { label: 'This Quarter', type: 'quarter' },
   currentYear: { label: 'This Year', type: 'year' }
 };
 
-const Dashboard: React.FC = () => {
+export const Dashboard = () => {
   const { data: identity } = useGetIdentity<UserIdentity>();
   const [stats, setStats] = useState<BookingStats | null>(null);
   const [recentBookings, setRecentBookings] = useState<RecentBooking[]>([]);
   const [loading, setLoading] = useState(true);
-  
-  // Date range state - default to current month
   const [dateRange, setDateRange] = useState<DateRange>({
     start: dayjs().startOf('month'),
     end: dayjs().endOf('month')
   });
-  const [selectedPreset, setSelectedPreset] = useState<string>('currentMonth');
+  const [selectedPreset, setSelectedPreset] = useState('currentMonth');
 
   const userRole = identity?.role;
 
@@ -103,7 +102,7 @@ const Dashboard: React.FC = () => {
     setSelectedPreset(preset);
     const now = dayjs();
     let newRange: DateRange;
-
+    
     switch (preset) {
       case 'today':
         newRange = {
@@ -238,14 +237,19 @@ const Dashboard: React.FC = () => {
       // Calculate additional metrics
       const totalNetMargin = calculateMargin(totalRevenue, totalTherapistFees);
       
-      // For therapists, calculate average based on fees, for admins based on revenue
+      // Calculate average booking value (revenue-based for admin, fee-based for therapist)
       const averageBookingValue = completedBookings.length > 0 
-        ? (isTherapist(userRole) 
-            ? totalTherapistFees / completedBookings.length 
-            : totalRevenue / completedBookings.length)
+        ? totalRevenue / completedBookings.length 
         : 0;
         
-      const conversionRate = bookings && bookings.length > 0 ? (completedBookings.length / bookings.length) * 100 : 0;
+      // Calculate average fee value (therapist fees / completed bookings)
+      const averageFeeValue = completedBookings.length > 0 
+        ? totalTherapistFees / completedBookings.length 
+        : 0;
+        
+      const conversionRate = bookings && bookings.length > 0 
+        ? (completedBookings.length / bookings.length) * 100 
+        : 0;
 
       // Get active therapists count (admin only)
       let activeTherapists = 0;
@@ -268,6 +272,7 @@ const Dashboard: React.FC = () => {
         pendingBookings: pendingBookings.length,
         cancelledBookings: cancelledBookings.length,
         averageBookingValue,
+        averageFeeValue,
         conversionRate
       };
 
@@ -288,8 +293,8 @@ const Dashboard: React.FC = () => {
           service_name: booking.services?.name || 'Unknown Service',
           booking_time: booking.booking_time,
           status: booking.status,
-          price: parseFloat(booking.price?.toString() || '0') || 0,
-          therapist_fee: parseFloat(booking.therapist_fee?.toString() || '0') || 0
+          price: parseFloat(booking.price) || 0,
+          therapist_fee: parseFloat(booking.therapist_fee) || 0
         })) || [];
 
       setStats(dashboardStats);
@@ -321,7 +326,8 @@ const Dashboard: React.FC = () => {
     }
   };
 
-  const recentBookingsColumns = [
+  // Table columns for recent bookings
+  const columns = [
     {
       title: 'Customer',
       dataIndex: 'customer_name',
@@ -331,12 +337,12 @@ const Dashboard: React.FC = () => {
     {
       title: 'Therapist',
       dataIndex: 'therapist_name',
-      key: 'therapist_name',
+      key: 'therapist_name'
     },
     {
       title: 'Service',
       dataIndex: 'service_name',
-      key: 'service_name',
+      key: 'service_name'
     },
     {
       title: 'Date & Time',
@@ -347,7 +353,7 @@ const Dashboard: React.FC = () => {
           <div>{dayjs(time).format('MMM DD, YYYY')}</div>
           <Text type="secondary">{dayjs(time).format('h:mm A')}</Text>
         </div>
-      ),
+      )
     },
     {
       title: 'Status',
@@ -357,27 +363,26 @@ const Dashboard: React.FC = () => {
         <Tag color={getStatusColor(status)} icon={getStatusIcon(status)}>
           {status.charAt(0).toUpperCase() + status.slice(1)}
         </Tag>
-      ),
+      )
     },
-    // ONLY change for therapists - admin keeps "Price"
     {
-      title: isTherapist(userRole) ? 'Fees' : 'Price',
-      dataIndex: isTherapist(userRole) ? 'therapist_fee' : 'price',
-      key: isTherapist(userRole) ? 'therapist_fee' : 'price',
-      render: (amount: number) => `$${amount.toFixed(2)}`,
+      title: 'Price',
+      dataIndex: 'price',
+      key: 'price',
+      render: (price: number) => `$${price.toFixed(2)}`
     },
-    // Only show "Therapist Fee" column for admins (not therapists) - UNCHANGED from original
-    ...(canAccess(userRole, 'canViewAllEarnings') && !isTherapist(userRole) ? [{
+    // Only show therapist fee column for admins
+    ...(canAccess(userRole, 'canViewAllEarnings') ? [{
       title: 'Therapist Fee',
       dataIndex: 'therapist_fee',
       key: 'therapist_fee',
-      render: (fee: number) => fee ? `$${fee.toFixed(2)}` : '-',
+      render: (fee: number) => fee ? `$${fee.toFixed(2)}` : '-'
     }] : [])
   ];
 
   const getDateRangeLabel = () => {
     if (selectedPreset !== 'custom') {
-      return DATE_PRESETS[selectedPreset as keyof typeof DATE_PRESETS]?.label || 'Custom Range';
+      return datePresets[selectedPreset as keyof typeof datePresets]?.label || 'Custom Range';
     }
     return `${dateRange.start.format('MMM DD, YYYY')} - ${dateRange.end.format('MMM DD, YYYY')}`;
   };
@@ -391,7 +396,7 @@ const Dashboard: React.FC = () => {
   }
 
   if (!identity) {
-    return null;
+    return <div>Loading...</div>;
   }
 
   return (
@@ -403,29 +408,30 @@ const Dashboard: React.FC = () => {
             <Title level={2}>
               {isTherapist(userRole) 
                 ? `Welcome back, ${identity?.first_name || identity?.name || 'Therapist'}!`
-                : `Rejuvenators Dashboard - ${getRoleName(userRole)}`}
+                : `Rejuvenators Dashboard - ${getRoleName(userRole)}`
+              }
             </Title>
             <Text type="secondary">
               {isTherapist(userRole) 
                 ? "Here's an overview of your bookings and performance"
-                : "Overview of your massage booking business"}
+                : "Overview of your massage booking business"
+              }
             </Text>
             <div style={{ marginTop: 8 }}>
               <Text strong>Period: </Text>
               <Text>{getDateRangeLabel()}</Text>
             </div>
           </div>
-          
           <Card size="small" style={{ minWidth: 400 }}>
             <Space direction="vertical" style={{ width: '100%' }}>
               <div>
                 <Text strong>Quick Select:</Text>
-                <Select
+                <Select 
                   value={selectedPreset}
                   onChange={handlePresetChange}
                   style={{ width: '100%', marginTop: 4 }}
                 >
-                  {Object.entries(DATE_PRESETS).map(([key, preset]) => (
+                  {Object.entries(datePresets).map(([key, preset]) => (
                     <Option key={key} value={key}>{preset.label}</Option>
                   ))}
                 </Select>
@@ -452,7 +458,7 @@ const Dashboard: React.FC = () => {
         </div>
       </div>
 
-      {/* Key Statistics - ONLY change for therapists */}
+      {/* Key Statistics - Role-based display */}
       <Row gutter={16} style={{ marginBottom: 24 }}>
         <Col span={6}>
           <Card>
@@ -479,7 +485,7 @@ const Dashboard: React.FC = () => {
           <Card>
             <Statistic
               title={isTherapist(userRole) ? "Avg Fee Value" : "Avg Booking Value"}
-              value={stats?.averageBookingValue || 0}
+              value={isTherapist(userRole) ? stats?.averageFeeValue || 0 : stats?.averageBookingValue || 0}
               prefix={<DollarOutlined />}
               precision={2}
               valueStyle={{ color: '#722ed1' }}
@@ -526,8 +532,8 @@ const Dashboard: React.FC = () => {
                     color: (stats?.totalNetMargin || 0) >= 50 
                       ? '#52c41a' 
                       : (stats?.totalNetMargin || 0) >= 30 
-                        ? '#fa8c16' 
-                        : '#f5222d'
+                        ? '#faad14' 
+                        : '#ff4d4f'
                   }}
                 />
               </Card>
@@ -540,51 +546,7 @@ const Dashboard: React.FC = () => {
                   prefix={<PercentageOutlined />}
                   precision={1}
                   suffix="%"
-                  valueStyle={{ color: '#1890ff' }}
-                />
-              </Card>
-            </Col>
-          </Row>
-
-          {/* Booking Status Breakdown */}
-          <Row gutter={16} style={{ marginBottom: 24 }}>
-            <Col span={6}>
-              <Card>
-                <Statistic
-                  title="Completed"
-                  value={stats?.completedBookings || 0}
-                  prefix={<CheckCircleOutlined />}
-                  valueStyle={{ color: '#52c41a' }}
-                />
-              </Card>
-            </Col>
-            <Col span={6}>
-              <Card>
-                <Statistic
-                  title="Confirmed"
-                  value={stats?.confirmedBookings || 0}
-                  prefix={<CalendarOutlined />}
-                  valueStyle={{ color: '#1890ff' }}
-                />
-              </Card>
-            </Col>
-            <Col span={6}>
-              <Card>
-                <Statistic
-                  title="Pending"
-                  value={stats?.pendingBookings || 0}
-                  prefix={<ClockCircleOutlined />}
-                  valueStyle={{ color: '#fa8c16' }}
-                />
-              </Card>
-            </Col>
-            <Col span={6}>
-              <Card>
-                <Statistic
-                  title="Cancelled"
-                  value={stats?.cancelledBookings || 0}
-                  prefix={<ExclamationCircleOutlined />}
-                  valueStyle={{ color: '#f5222d' }}
+                  valueStyle={{ color: '#722ed1' }}
                 />
               </Card>
             </Col>
@@ -592,22 +554,23 @@ const Dashboard: React.FC = () => {
         </>
       )}
 
-      {/* Recent Bookings Table */}
+      {/* Recent Bookings */}
       <Card 
-        title={isTherapist(userRole) ? "Your Recent Bookings" : "Recent Bookings"} 
-        style={{ marginBottom: 24 }}
+        title="Recent Bookings" 
+        extra={
+          <Button size="small" onClick={fetchDashboardData}>
+            Refresh
+          </Button>
+        }
       >
         <Table
+          columns={columns}
           dataSource={recentBookings}
-          columns={recentBookingsColumns}
           rowKey="id"
-          pagination={{ pageSize: 10 }}
-          scroll={{ x: 800 }}
+          pagination={{ pageSize: 5 }}
+          size="small"
         />
       </Card>
     </div>
   );
 };
-
-export { Dashboard };
-export default Dashboard;
