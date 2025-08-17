@@ -40,7 +40,6 @@ import dayjs, { Dayjs } from 'dayjs';
 
 // Import role utilities and components
 import { UserIdentity, canAccess, isTherapist, isAdmin } from '../../utils/roleUtils';
-import { RoleGuard } from '../../components/RoleGuard';
 
 const { Title, Text } = Typography;
 const { Search } = Input;
@@ -212,6 +211,8 @@ export const EnhancedBookingList = () => {
           pagination.current * pagination.pageSize - 1
         );
 
+      console.log('Query executed successfully, got data:', data?.length, 'records');
+
       if (error) throw error;
 
       setBookings(data || []);
@@ -222,7 +223,8 @@ export const EnhancedBookingList = () => {
 
     } catch (error) {
       console.error('Error fetching bookings:', error);
-      message.error('Failed to load bookings');
+      console.log('Error details:', JSON.stringify(error, null, 2));
+      message.error(`Failed to load bookings: ${error.message || 'Unknown error'}`);
     } finally {
       setLoading(false);
     }
@@ -488,7 +490,7 @@ export const EnhancedBookingList = () => {
               onClick={() => edit('bookings', record.id)}
             />
           </Tooltip>
-          {canAccess(userRole, 'canEditAllBookings') && (
+          {(canAccess(userRole, 'canEditAllBookings') || userRole === 'super_admin') && (
             <Dropdown
               menu={{
                 items: statusMenuItems.map(item => ({
@@ -514,42 +516,49 @@ export const EnhancedBookingList = () => {
   };
 
   return (
-    <RoleGuard requiredPermission="canViewAllBookings">
-      <div style={{ padding: 24 }}>
-        {/* Debug info - remove after testing */}
-        {process.env.NODE_ENV === 'development' && (
-          <div style={{ marginBottom: 16, padding: 8, backgroundColor: '#f0f0f0', fontSize: '12px' }}>
-            Debug: Role = {userRole}, Identity = {JSON.stringify(identity)}, Can View All Bookings = {canAccess(userRole, 'canViewAllBookings').toString()}
-          </div>
-        )}
+    <div style={{ padding: 24 }}>
+      {/* Debug info - remove after testing */}
+      {process.env.NODE_ENV === 'development' && (
+        <div style={{ marginBottom: 16, padding: 8, backgroundColor: '#f0f0f0', fontSize: '12px' }}>
+          Debug: Role = {userRole}, Identity = {JSON.stringify(identity)}, Can View All Bookings = {canAccess(userRole, 'canViewAllBookings').toString()}
+        </div>
+      )}
 
-        {/* Header */}
-        <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
-          <Col span={12}>
-            <Title level={3}>Bookings</Title>
-          </Col>
-          <Col span={12} style={{ textAlign: 'right' }}>
-            <Space>
-              <Button 
-                icon={<ReloadOutlined />} 
-                onClick={fetchBookings}
-                loading={loading}
-              >
-                Refresh
-              </Button>
-              {canAccess(userRole, 'canCreateBookings') && (
-                <Button
-                  type="primary"
-                  icon={<PlusOutlined />}
-                  href="https://your-booking-platform-url.com"
-                  target="_blank"
+      {/* Show access denied only if explicitly not allowed AND not super_admin */}
+      {!canAccess(userRole, 'canViewAllBookings') && userRole !== 'super_admin' ? (
+        <div style={{ padding: 24, textAlign: 'center' }}>
+          <Title level={3}>Access Denied</Title>
+          <Text>You don't have permission to access this page.</Text>
+        </div>
+      ) : (
+        <>
+          {/* Header */}
+          <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
+            <Col span={12}>
+              <Title level={3}>Bookings</Title>
+            </Col>
+            <Col span={12} style={{ textAlign: 'right' }}>
+              <Space>
+                <Button 
+                  icon={<ReloadOutlined />} 
+                  onClick={fetchBookings}
+                  loading={loading}
                 >
-                  New Booking
+                  Refresh
                 </Button>
-              )}
-            </Space>
-          </Col>
-        </Row>
+                {(canAccess(userRole, 'canCreateBookings') || userRole === 'super_admin') && (
+                  <Button
+                    type="primary"
+                    icon={<PlusOutlined />}
+                    href="https://your-booking-platform-url.com"
+                    target="_blank"
+                  >
+                    New Booking
+                  </Button>
+                )}
+              </Space>
+            </Col>
+          </Row>
 
         {/* Summary Statistics - ROLE-BASED */}
         <Row gutter={16} style={{ marginBottom: 24 }}>
@@ -671,7 +680,7 @@ export const EnhancedBookingList = () => {
         </Card>
 
         {/* Bulk Actions */}
-        {selectedRowKeys.length > 0 && canAccess(userRole, 'canEditAllBookings') && (
+        {selectedRowKeys.length > 0 && (canAccess(userRole, 'canEditAllBookings') || userRole === 'super_admin') && (
           <Card style={{ marginBottom: 16 }}>
             <Space>
               <Text>Selected {selectedRowKeys.length} booking(s)</Text>
@@ -711,7 +720,8 @@ export const EnhancedBookingList = () => {
             scroll={{ x: 1200 }}
           />
         </Card>
-      </div>
-    </RoleGuard>
+        </>
+      )}
+    </div>
   );
 };
