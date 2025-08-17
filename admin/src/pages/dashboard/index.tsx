@@ -22,7 +22,8 @@ import {
   ExclamationCircleOutlined,
   PercentageOutlined,
   TeamOutlined,
-  ReloadOutlined
+  ReloadOutlined,
+  EyeOutlined
 } from '@ant-design/icons';
 import { useGetIdentity } from '@refinedev/core';
 import { supabaseClient } from '../../utility';
@@ -39,6 +40,9 @@ interface BookingStats {
   totalBookings: number;
   totalRevenue: number;
   totalTherapistFees: number;
+  feesConfirmed: number;
+  feesCompleted: number;
+  feesDeclined: number;
   totalNetMargin: number;
   activeTherapists: number;
   completedBookings: number;
@@ -261,10 +265,18 @@ export const Dashboard = () => {
         activeTherapists = therapists?.length || 0;
       }
 
+      // Calculate therapist fees by status
+      const feesConfirmed = confirmedBookings.reduce((sum, b) => sum + (parseFloat(b.therapist_fee?.toString() || '0') || 0), 0);
+      const feesCompleted = completedBookings.reduce((sum, b) => sum + (parseFloat(b.therapist_fee?.toString() || '0') || 0), 0);
+      const feesDeclined = (bookings?.filter(b => b.status === 'declined') || []).reduce((sum, b) => sum + (parseFloat(b.therapist_fee?.toString() || '0') || 0), 0);
+
       const dashboardStats: BookingStats = {
         totalBookings: bookings?.length || 0,
         totalRevenue,
         totalTherapistFees,
+        feesConfirmed,
+        feesCompleted, 
+        feesDeclined,
         totalNetMargin,
         activeTherapists,
         completedBookings: completedBookings.length,
@@ -276,10 +288,10 @@ export const Dashboard = () => {
         conversionRate
       };
 
-      // Prepare recent bookings (sorted by most recent)
+      // Prepare recent bookings (sorted by most recent) - increased from 10 to 50
       const recent = bookings
         ?.sort((a, b) => dayjs(b.booking_time).unix() - dayjs(a.booking_time).unix())
-        .slice(0, 10)
+        .slice(0, 50)
         .map(booking => ({
           id: booking.id,
           customer_name: booking.customers 
@@ -326,7 +338,7 @@ export const Dashboard = () => {
     }
   };
 
-  // Table columns for recent bookings
+  // Table columns for recent bookings - ROLE-BASED
   const columns = [
     {
       title: 'Customer',
@@ -365,19 +377,42 @@ export const Dashboard = () => {
         </Tag>
       )
     },
+    // ROLE-BASED COLUMN: Show "Fees" for therapists, "Price" for admins
     {
-      title: 'Price',
-      dataIndex: 'price',
-      key: 'price',
-      render: (price: number) => `$${price.toFixed(2)}`
+      title: isTherapist(userRole) ? 'Fees' : 'Price',
+      dataIndex: isTherapist(userRole) ? 'therapist_fee' : 'price',
+      key: isTherapist(userRole) ? 'therapist_fee' : 'price',
+      render: (amount: number) => (
+        <Text strong style={{ color: '#52c41a' }}>
+          ${amount?.toFixed(2) || '0.00'}
+        </Text>
+      )
     },
-    // Only show therapist fee column for admins
-    ...(canAccess(userRole, 'canViewAllEarnings') ? [{
+    // Only show separate therapist fee column for admins (not therapists)
+    ...(canAccess(userRole, 'canViewAllEarnings') && !isTherapist(userRole) ? [{
       title: 'Therapist Fee',
       dataIndex: 'therapist_fee',
       key: 'therapist_fee',
-      render: (fee: number) => fee ? `$${fee.toFixed(2)}` : '-'
-    }] : [])
+      render: (fee: number) => fee ? `${fee.toFixed(2)}` : '-'
+    }] : []),
+    // Add View button for therapists
+    {
+      title: 'Actions',
+      key: 'actions',
+      render: (_: any, record: RecentBooking) => (
+        <Button
+          type="text"
+          icon={<EyeOutlined />}
+          onClick={() => {
+            // Navigate to booking details - you can implement this
+            window.open(`/admin/#/bookings/show/${record.id}`, '_blank');
+          }}
+          title="View Details"
+        >
+          View
+        </Button>
+      )
+    }
   ];
 
   const getDateRangeLabel = () => {
@@ -470,39 +505,132 @@ export const Dashboard = () => {
             />
           </Card>
         </Col>
-        <Col span={6}>
-          <Card>
-            <Statistic
-              title={isTherapist(userRole) ? "Total Fees" : "Total Revenue"}
-              value={isTherapist(userRole) ? stats?.totalTherapistFees || 0 : stats?.totalRevenue || 0}
-              prefix={<DollarOutlined />}
-              precision={2}
-              valueStyle={{ color: '#52c41a' }}
-            />
-          </Card>
-        </Col>
-        <Col span={6}>
-          <Card>
-            <Statistic
-              title={isTherapist(userRole) ? "Avg Fee Value" : "Avg Booking Value"}
-              value={isTherapist(userRole) ? stats?.averageFeeValue || 0 : stats?.averageBookingValue || 0}
-              prefix={<DollarOutlined />}
-              precision={2}
-              valueStyle={{ color: '#722ed1' }}
-            />
-          </Card>
-        </Col>
-        <Col span={6}>
-          <Card>
-            <Statistic
-              title={canAccess(userRole, 'canViewAllTherapists') ? "Active Therapists" : "Your Completed"}
-              value={canAccess(userRole, 'canViewAllTherapists') ? stats?.activeTherapists || 0 : stats?.completedBookings || 0}
-              prefix={canAccess(userRole, 'canViewAllTherapists') ? <UserOutlined /> : <CheckCircleOutlined />}
-              valueStyle={{ color: '#722ed1' }}
-            />
-          </Card>
-        </Col>
+        
+        {/* THERAPIST VIEW: Show separate fee categories */}
+        {isTherapist(userRole) ? (
+          <>
+            <Col span={6}>
+              <Card>
+                <Statistic
+                  title="Fees Confirmed"
+                  value={stats?.feesConfirmed || 0}
+                  prefix={<DollarOutlined />}
+                  precision={2}
+                  valueStyle={{ color: '#1890ff' }}
+                />
+              </Card>
+            </Col>
+            <Col span={6}>
+              <Card>
+                <Statistic
+                  title="Fees Completed"
+                  value={stats?.feesCompleted || 0}
+                  prefix={<DollarOutlined />}
+                  precision={2}
+                  valueStyle={{ color: '#52c41a' }}
+                />
+              </Card>
+            </Col>
+            <Col span={6}>
+              <Card>
+                <Statistic
+                  title="Your Completed"
+                  value={stats?.completedBookings || 0}
+                  prefix={<CheckCircleOutlined />}
+                  valueStyle={{ color: '#722ed1' }}
+                />
+              </Card>
+            </Col>
+          </>
+        ) : (
+          // ADMIN VIEW: Show revenue and average (unchanged)
+          <>
+            <Col span={6}>
+              <Card>
+                <Statistic
+                  title="Total Revenue"
+                  value={stats?.totalRevenue || 0}
+                  prefix={<DollarOutlined />}
+                  precision={2}
+                  valueStyle={{ color: '#52c41a' }}
+                />
+              </Card>
+            </Col>
+            <Col span={6}>
+              <Card>
+                <Statistic
+                  title="Avg Booking Value"
+                  value={stats?.averageBookingValue || 0}
+                  prefix={<DollarOutlined />}
+                  precision={2}
+                  valueStyle={{ color: '#722ed1' }}
+                />
+              </Card>
+            </Col>
+            <Col span={6}>
+              <Card>
+                <Statistic
+                  title={canAccess(userRole, 'canViewAllTherapists') ? "Active Therapists" : "Your Completed"}
+                  value={canAccess(userRole, 'canViewAllTherapists') ? stats?.activeTherapists || 0 : stats?.completedBookings || 0}
+                  prefix={canAccess(userRole, 'canViewAllTherapists') ? <UserOutlined /> : <CheckCircleOutlined />}
+                  valueStyle={{ color: '#722ed1' }}
+                />
+              </Card>
+            </Col>
+          </>
+        )}
       </Row>
+
+      {/* Second row for therapists - Fees Declined */}
+      {isTherapist(userRole) && (
+        <Row gutter={16} style={{ marginBottom: 24 }}>
+          <Col span={6}>
+            <Card>
+              <Statistic
+                title="Fees Declined"
+                value={stats?.feesDeclined || 0}
+                prefix={<DollarOutlined />}
+                precision={2}
+                valueStyle={{ color: '#ff4d4f' }}
+              />
+            </Card>
+          </Col>
+          <Col span={6}>
+            <Card>
+              <Statistic
+                title="Avg Fee Value"
+                value={stats?.averageFeeValue || 0}
+                prefix={<DollarOutlined />}
+                precision={2}
+                valueStyle={{ color: '#722ed1' }}
+              />
+            </Card>
+          </Col>
+          <Col span={6}>
+            <Card>
+              <Statistic
+                title="Total Fees"
+                value={stats?.totalTherapistFees || 0}
+                prefix={<DollarOutlined />}
+                precision={2}
+                valueStyle={{ color: '#52c41a' }}
+              />
+            </Card>
+          </Col>
+          <Col span={6}>
+            <Card>
+              <Statistic
+                title="Conversion Rate"
+                value={stats?.conversionRate || 0}
+                prefix={<PercentageOutlined />}
+                precision={1}
+                suffix="%"
+                valueStyle={{ color: '#722ed1' }}
+              />
+            </Card>
+          </Col>
+        </Row>
+      )}
 
       {/* Admin-specific Statistics - UNCHANGED (admin view only) */}
       {canAccess(userRole, 'canViewAllEarnings') && (
@@ -567,7 +695,13 @@ export const Dashboard = () => {
           columns={columns}
           dataSource={recentBookings}
           rowKey="id"
-          pagination={{ pageSize: 5 }}
+          pagination={{ 
+            pageSize: 10,
+            showSizeChanger: true,
+            showQuickJumper: true,
+            pageSizeOptions: ['5', '10', '20', '50'],
+            showTotal: (total, range) => `${range[0]}-${range[1]} of ${total} bookings`
+          }}
           size="small"
         />
       </Card>
