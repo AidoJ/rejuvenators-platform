@@ -516,6 +516,13 @@ export const EnhancedBookingList = () => {
   return (
     <RoleGuard requiredPermission="canViewAllBookings">
       <div style={{ padding: 24 }}>
+        {/* Debug info - remove after testing */}
+        {process.env.NODE_ENV === 'development' && (
+          <div style={{ marginBottom: 16, padding: 8, backgroundColor: '#f0f0f0', fontSize: '12px' }}>
+            Debug: Role = {userRole}, Identity = {JSON.stringify(identity)}, Can View All Bookings = {canAccess(userRole, 'canViewAllBookings').toString()}
+          </div>
+        )}
+
         {/* Header */}
         <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
           <Col span={12}>
