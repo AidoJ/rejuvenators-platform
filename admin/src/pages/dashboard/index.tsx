@@ -25,7 +25,7 @@ import {
   ReloadOutlined,
   EyeOutlined
 } from '@ant-design/icons';
-import { useGetIdentity } from '@refinedev/core';
+import { useGetIdentity, useNavigation } from '@refinedev/core';
 import { supabaseClient } from '../../utility';
 import dayjs, { Dayjs } from 'dayjs';
 
@@ -85,6 +85,7 @@ const datePresets = {
 
 export const Dashboard = () => {
   const { data: identity } = useGetIdentity<UserIdentity>();
+  const { show } = useNavigation();
   const [stats, setStats] = useState<BookingStats | null>(null);
   const [recentBookings, setRecentBookings] = useState<RecentBooking[]>([]);
   const [loading, setLoading] = useState(true);
@@ -393,9 +394,9 @@ export const Dashboard = () => {
       title: 'Therapist Fee',
       dataIndex: 'therapist_fee',
       key: 'therapist_fee',
-      render: (fee: number) => fee ? `${fee.toFixed(2)}` : '-'
+      render: (fee: number) => fee ? `$${fee.toFixed(2)}` : '-'
     }] : []),
-    // Add View button for therapists
+    // Add View button for all users
     {
       title: 'Actions',
       key: 'actions',
@@ -403,10 +404,7 @@ export const Dashboard = () => {
         <Button
           type="text"
           icon={<EyeOutlined />}
-          onClick={() => {
-            // Navigate to booking details - you can implement this
-            window.open(`/admin/#/bookings/show/${record.id}`, '_blank');
-          }}
+          onClick={() => show('bookings', record.id)}
           title="View Details"
         >
           View
