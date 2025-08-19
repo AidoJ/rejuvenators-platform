@@ -224,7 +224,8 @@ export const EnhancedBookingList = () => {
     } catch (error) {
       console.error('Error fetching bookings:', error);
       console.log('Error details:', JSON.stringify(error, null, 2));
-      message.error(`Failed to load bookings: ${error.message || 'Unknown error'}`);
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      message.error(`Failed to load bookings: ${errorMessage}`);
     } finally {
       setLoading(false);
     }
