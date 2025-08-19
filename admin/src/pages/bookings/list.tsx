@@ -152,13 +152,13 @@ export const EnhancedBookingList = () => {
     try {
       setLoading(true);
       
-      // Build query with joins
+      // Build query with joins - FIXED: Specify exact therapist relationship
       let query = supabaseClient
         .from('bookings')
         .select(`
           *,
           customers(id, first_name, last_name, email, phone),
-          therapist_profiles(id, first_name, last_name, email, phone),
+          therapist_profiles!bookings_therapist_id_fkey(id, first_name, last_name, email, phone),
           services(id, name, description, service_base_price)
         `, { count: 'exact' });
 
