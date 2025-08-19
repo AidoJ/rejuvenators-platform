@@ -194,7 +194,7 @@ export const Dashboard = () => {
     try {
       setLoading(true);
       
-      // Build base query with role-based filtering
+      // Build base query with role-based filtering - FIXED: Specify exact therapist relationship
       let bookingsQuery = supabaseClient
         .from('bookings')
         .select(`
